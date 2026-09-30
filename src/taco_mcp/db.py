@@ -25,12 +25,17 @@ class TacoDB:
     
     def _load_aliases(self):
         """Load aliases from YAML file."""
-        aliases_path = Path(__file__).parent.parent.parent / "data" / "aliases.yaml"
-        if aliases_path.exists():
-            with open(aliases_path, 'r', encoding='utf-8') as f:
-                self._aliases = yaml.safe_load(f) or {}
-        else:
-            self._aliases = {}
+        candidates = [
+            Path(__file__).parent / "data" / "aliases.yaml",
+            Path(__file__).parent.parent.parent / "data" / "aliases.yaml",
+            Path.cwd() / "data" / "aliases.yaml",
+        ]
+        for aliases_path in candidates:
+            if aliases_path.exists():
+                with open(aliases_path, 'r', encoding='utf-8') as f:
+                    self._aliases = yaml.safe_load(f) or {}
+                return
+        self._aliases = {}
     
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection."""

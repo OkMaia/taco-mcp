@@ -124,6 +124,69 @@ Reinicie o Claude Desktop.
 
 ---
 
+## ☁️ Deploy remoto no Heroku
+
+O deploy usa o transporte MCP **Streamable HTTP**. O endpoint remoto é
+`/mcp`, protegido por bearer token, e expõe somente as consultas oficiais da
+TACO:
+
+- `search_food`
+- `get_food`
+- `calculate_macros`
+- `calculate_meal_macros`
+
+O transporte local `stdio` continua oferecendo também as ferramentas de
+alimentos customizados.
+
+### Criar e configurar o app
+
+Requisito: [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli) e
+acesso autenticado.
+
+```bash
+heroku login
+heroku create <nome-do-app>
+
+export MCP_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+heroku config:set MCP_AUTH_TOKEN="$MCP_AUTH_TOKEN"
+heroku config:set MCP_ALLOWED_HOSTS="<host-do-app-sem-https>"
+# Em apps Heroku Fir, use: heroku config:set WEB_HOST="::"
+```
+
+Use o hostname exibido por `heroku info` em `MCP_ALLOWED_HOSTS`, sem
+`https://` ou caminho. Por exemplo: `meu-taco.herokuapp.com`.
+
+### Publicar
+
+```bash
+git push heroku HEAD:main
+heroku ps:scale web=1
+heroku logs --tail
+```
+
+Após o deploy, a URL do MCP será:
+
+```text
+https://<host-do-app>/mcp
+```
+
+O health check público pode ser validado com:
+
+```bash
+curl https://<host-do-app>/health
+```
+
+Para um cliente MCP remoto, informe essa URL e o header:
+
+```text
+Authorization: Bearer <MCP_AUTH_TOKEN>
+```
+
+O SQLite do Heroku é efêmero; por isso o deploy é deliberadamente somente
+leitura e não persiste alimentos customizados entre reinicializações.
+
+---
+
 ## 📊 Base de Dados TACO
 
 A **TACO** (Tabela Brasileira de Composição de Alimentos) é mantida pela UNICAMP/NEPA e é a referência oficial para nutrição no Brasil.

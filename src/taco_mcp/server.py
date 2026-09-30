@@ -2,6 +2,7 @@
 """MCP server for TACO nutritional database."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -43,11 +44,28 @@ db = TacoDB(DB_PATH)
 # Create MCP server
 app = Server("taco-mcp")
 
+READ_ONLY_TOOL_NAMES = frozenset({
+    "search_food",
+    "get_food",
+    "calculate_macros",
+    "calculate_meal_macros",
+})
+CUSTOM_TOOL_NAMES = frozenset({
+    "add_custom_food",
+    "list_custom_foods",
+    "delete_custom_food",
+})
+
+
+def is_read_only_mode() -> bool:
+    """Return whether the server should expose only official read-only tools."""
+    return os.getenv("TACO_MCP_READ_ONLY", "").lower() in {"1", "true", "yes", "on"}
+
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
     """List available tools."""
-    return [
+    tools = [
         Tool(
             name="search_food",
             description="Search for foods in the TACO database by name. Returns multiple candidates with macros per 100g. Includes both official TACO foods and custom foods.",
@@ -217,6 +235,9 @@ async def list_tools() -> list[Tool]:
             }
         )
     ]
+    if is_read_only_mode():
+        return [tool for tool in tools if tool.name in READ_ONLY_TOOL_NAMES]
+    return tools
 
 
 CUSTOM_FOOD_ID_OFFSET = 100000  # Custom foods start at this ID
@@ -224,13 +245,26 @@ CUSTOM_FOOD_ID_OFFSET = 100000  # Custom foods start at this ID
 @app.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     """Handle tool calls."""
-    
+
+    if is_read_only_mode() and name in CUSTOM_TOOL_NAMES:
+        return [TextContent(
+            type="text",
+            text=json.dumps({
+                "error": f"Tool '{name}' is disabled in read-only mode"
+            }, indent=2)
+        )]
+
     if name == "search_food":
         args = SearchFoodInput(**arguments)
-        # Search both TACO and custom foods
         taco_results = db.search_food(args.query, args.limit)
-        custom_results = db.search_custom_foods(args.query, args.limit, id_offset=CUSTOM_FOOD_ID_OFFSET)
-        
+        custom_results = []
+        if not is_read_only_mode():
+            custom_results = db.search_custom_foods(
+                args.query,
+                args.limit,
+                id_offset=CUSTOM_FOOD_ID_OFFSET,
+            )
+
         # Combine results
         all_results = taco_results.results + custom_results
         # Limit to requested amount
@@ -251,7 +285,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         food_id = args.food_id
         
         # Check if it's a custom food ID (>= offset)
-        if food_id >= CUSTOM_FOOD_ID_OFFSET:
+        if food_id >= CUSTOM_FOOD_ID_OFFSET and not is_read_only_mode():
             result = db.get_custom_food(food_id - CUSTOM_FOOD_ID_OFFSET)
             if result:
                 # Adjust ID in response
@@ -259,7 +293,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         else:
             # Try TACO first
             result = db.get_food(food_id)
-            if result is None:
+            if result is None and not is_read_only_mode():
                 # Check if there's a custom food with this ID (legacy)
                 result = db.get_custom_food(food_id)
         
@@ -278,7 +312,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         food_id = args.food_id
         
         # Check if it's a custom food
-        if food_id >= CUSTOM_FOOD_ID_OFFSET:
+        if food_id >= CUSTOM_FOOD_ID_OFFSET and not is_read_only_mode():
             custom_id = food_id - CUSTOM_FOOD_ID_OFFSET
             custom = db.get_custom_food(custom_id)
             if custom:
@@ -310,7 +344,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         else:
             # Try TACO
             result = db.calculate_macros(food_id, args.grams)
-            if result is None:
+            if result is None and not is_read_only_mode():
                 # Try custom food (legacy)
                 custom = db.get_custom_food(food_id)
                 if custom:

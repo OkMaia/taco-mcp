@@ -4,8 +4,10 @@ version = "0.1.0"
 description = "MCP server for Brazilian TACO nutritional database"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.0.0",
+    "mcp>=1.26.0,<2.0.0",
     "pyyaml>=6.0",
+    "starlette>=0.41.3,<1.0.0",
+    "uvicorn>=0.32.1,<1.0.0",
 ]
 
 [project.scripts]
@@ -27,6 +29,7 @@ packages = ["src/taco_mcp"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "data/processed/taco.sqlite" = "taco_mcp/data/taco.sqlite"
+"data/aliases.yaml" = "taco_mcp/data/aliases.yaml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
