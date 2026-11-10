@@ -317,7 +317,7 @@ Calculates food portion amounts (in grams) and household measures for one or mul
           "role": "protein",
           "grams": 260,
           "household": {
-            "quantity": 7.5,
+            "quantity": 7,
             "unit": "claras",
             "note": "≈"
           },
@@ -329,7 +329,7 @@ Calculates food portion amounts (in grams) and household measures for one or mul
           "role": "fruit",
           "grams": 200,
           "household": {
-            "quantity": 13.5,
+            "quantity": 13,
             "unit": "unidades médias",
             "note": "≈"
           },

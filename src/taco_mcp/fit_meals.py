@@ -30,13 +30,15 @@ from .schemas import (
 VALID_ROLES = frozenset({"protein", "carb", "veg", "fruit", "fat", "free"})
 
 ROLE_DEFAULTS = {
-    "protein": {"min_g": 30.0, "max_g": 300.0, "step_g": 10.0},
-    "carb": {"min_g": 0.0, "max_g": 250.0, "step_g": 5.0},
-    "fruit": {"min_g": 30.0, "max_g": 250.0, "step_g": 10.0},
-    "veg": {"min_g": 0.0, "max_g": 200.0, "step_g": 10.0},
-    "fat": {"min_g": 0.0, "max_g": 30.0, "step_g": 5.0},
+    "protein": {"min_g": 30.0, "max_g": 250.0, "step_g": 10.0},
+    "carb": {"min_g": 0.0, "max_g": 120.0, "step_g": 5.0},
+    "veg": {"min_g": 0.0, "max_g": 100.0, "step_g": 10.0},
+    "fruit": {"min_g": 0.0, "max_g": 150.0, "step_g": 10.0},
+    "fat": {"min_g": 0.0, "max_g": 10.0, "step_g": 5.0},
     "free": {"min_g": 0.0, "max_g": 0.0, "step_g": 1.0},
 }
+LOW_CARB_THRESHOLD_G = 15.0
+LOW_CARB_DEFAULT_MAX_G = 60.0
 
 DEFAULT_TOLERANCE = FitTolerance(
     kcal_pct=10.0,
@@ -176,22 +178,38 @@ def calculate_household_measure(
         return None
 
     raw_qty = grams / grams_per_unit
-    # Arredondar para meia unidade (0.5) quando fizer sentido
-    rounded_qty = round(raw_qty * 2.0) / 2.0
-    if rounded_qty <= 0:
-        rounded_qty = 0.5
 
-    quantity: Union[int, float]
-    if rounded_qty.is_integer():
-        quantity = int(rounded_qty)
+    # Regras:
+    # - Arredonde a quantidade para inteiro quando for 3 ou mais; para meio quando for menos de 3.
+    if raw_qty >= 2.75:
+        rounded_val = float(round(raw_qty))
     else:
-        quantity = rounded_qty
+        rounded_val = round(raw_qty * 2.0) / 2.0
+        if rounded_val <= 0:
+            rounded_val = 0.5
 
-    # Note "≈" quando arredondar
-    is_rounded = abs(raw_qty - quantity) > 1e-4
+    # - Use "note": "≈" sempre que arredondar.
+    is_rounded = abs(raw_qty - rounded_val) > 1e-4
     note = "≈" if is_rounded else None
 
-    unit = entry["unit"] if quantity == 1 else entry.get("unit_plural", entry["unit"])
+    # - Meio vira "1/2 unidade" (texto com a unidade no singular).
+    # - Inteiro 1 vira singular ("1 unidade média"); 2 ou mais, plural.
+    # - Nunca devolva quantidade fracionária com unidade no plural.
+    quantity: Union[int, float, str]
+    if rounded_val == 0.5:
+        quantity = "1/2"
+        unit = entry["unit"]
+    elif rounded_val.is_integer():
+        quantity = int(rounded_val)
+        if quantity == 1:
+            unit = entry["unit"]
+        else:
+            unit = entry.get("unit_plural", entry["unit"])
+    else:
+        # Fracionário (ex.: 1.5, 2.5) -> singular ("Nunca devolva quantidade fracionária com unidade no plural")
+        quantity = rounded_val
+        unit = entry["unit"]
+
     return HouseholdMeasure(quantity=quantity, unit=unit, note=note)
 
 
@@ -385,9 +403,15 @@ def solve_meal_option(
                 message=f"Campo inválido: papel '{item.role}' desconhecido no item '{item.food}'. Papéis válidos: {', '.join(sorted(VALID_ROLES))}.",
             )
 
-        defaults = ROLE_DEFAULTS.get(item.role, {"min_g": 0.0, "max_g": 200.0, "step_g": 10.0})
+        defaults = ROLE_DEFAULTS.get(item.role, {"min_g": 0.0, "max_g": 100.0, "step_g": 10.0})
         min_g = item.min_g if item.min_g is not None else defaults["min_g"]
-        max_g = item.max_g if item.max_g is not None else defaults["max_g"]
+        if item.max_g is not None:
+            max_g = item.max_g
+        else:
+            if item.role == "carb" and target.carb_g < LOW_CARB_THRESHOLD_G:
+                max_g = LOW_CARB_DEFAULT_MAX_G
+            else:
+                max_g = defaults["max_g"]
         step_g = item.step_g if item.step_g is not None else defaults["step_g"]
 
         if min_g < 0:
@@ -478,11 +502,20 @@ def solve_meal_option(
         tot_p = sum(g[i] * active_foods[i]["p_per_g"] for i in range(n))
         tot_c = sum(g[i] * active_foods[i]["c_per_g"] for i in range(n))
         tot_f = sum(g[i] * active_foods[i]["f_per_g"] for i in range(n))
+
+        # Gordura: penaliza apenas se passar da meta
+        err_f = max(0.0, tot_f - target.fat_g)
+
+        # Carboidrato: penalidade total se passar da meta, reduzida se estiver abaixo
+        err_c = tot_c - target.carb_g
+        if err_c < 0:
+            err_c = 0.2 * err_c
+
         return (
             w_k * ((tot_k - target.kcal) / delta_k) ** 2 +
             w_p * ((tot_p - target.protein_g) / delta_p) ** 2 +
-            w_c * ((tot_c - target.carb_g) / delta_c) ** 2 +
-            w_f * ((tot_f - target.fat_g) / delta_f) ** 2
+            w_c * (err_c / delta_c) ** 2 +
+            w_f * (err_f / delta_f) ** 2
         )
 
     best_grams: list[float] = []
@@ -503,18 +536,21 @@ def solve_meal_option(
                 r_c = sum(g_cont[j] * active_foods[j]["c_per_g"] for j in range(n) if j != i) - target.carb_g
                 r_f = sum(g_cont[j] * active_foods[j]["f_per_g"] for j in range(n) if j != i) - target.fat_g
 
+                w_f_i = w_f if r_f > 0 else 0.0
+                w_c_i = w_c if r_c > 0 else 0.2 * w_c
+
                 denom = (
                     w_k * (ki / delta_k) ** 2 +
                     w_p * (pi / delta_p) ** 2 +
-                    w_c * (ci / delta_c) ** 2 +
-                    w_f * (ffi / delta_f) ** 2
+                    w_c_i * (ci / delta_c) ** 2 +
+                    w_f_i * (ffi / delta_f) ** 2
                 )
                 if denom > 1e-12:
                     numer = - (
                         w_k * ki * r_k / (delta_k ** 2) +
                         w_p * pi * r_p / (delta_p ** 2) +
-                        w_c * ci * r_c / (delta_c ** 2) +
-                        w_f * ffi * r_f / (delta_f ** 2)
+                        w_c_i * ci * r_c / (delta_c ** 2) +
+                        w_f_i * ffi * r_f / (delta_f ** 2)
                     )
                     g_star = numer / denom
                     g_cont[i] = max(fi["min_g"], min(fi["max_g"], g_star))
@@ -547,13 +583,13 @@ def solve_meal_option(
             if not improved:
                 break
 
-        # For very small combination spaces (<= 5000), also check full grid for guaranteed global optimum
+        # For small combination spaces (<= 25000), also check full grid for guaranteed global optimum
         grid_combinations = 1
         for f in active_foods:
             count = int(round((f["max_g"] - f["min_g"]) / f["step_g"])) + 1
             grid_combinations *= max(1, count)
 
-        if grid_combinations <= 5000 and n <= 3:
+        if grid_combinations <= 25000 and n <= 4:
             import itertools
             grid_ranges = [
                 [
@@ -645,11 +681,27 @@ def solve_meal_option(
         fat_g=round(totals.fat_g - target.fat_g, 2),
     )
 
+    within_kcal = abs(deviation.kcal_pct) <= tol.kcal_pct + 1e-4
+    within_protein = abs(deviation.protein_g) <= tol.protein_g + 1e-4
+
+    # Gordura: tolerância passa a valer só para CIMA (acima da meta + tolerância reprova).
+    # Gordura abaixo da meta é aceita e não reprova.
+    within_fat = deviation.fat_g <= tol.fat_g + 1e-4
+
+    # Carboidrato: reprova se passar da meta + tolerância.
+    # Se ficar abaixo da meta, é aceitável quando calorias e proteína estiverem dentro.
+    if deviation.carb_g > tol.carb_g + 1e-4:
+        within_carb = False
+    elif deviation.carb_g >= -tol.carb_g - 1e-4:
+        within_carb = True
+    else:
+        within_carb = (within_kcal and within_protein)
+
     within_tolerance = FitWithinTolerance(
-        kcal=abs(deviation.kcal_pct) <= tol.kcal_pct + 1e-4,
-        protein=abs(deviation.protein_g) <= tol.protein_g + 1e-4,
-        carb=abs(deviation.carb_g) <= tol.carb_g + 1e-4,
-        fat=abs(deviation.fat_g) <= tol.fat_g + 1e-4,
+        kcal=within_kcal,
+        protein=within_protein,
+        carb=within_carb,
+        fat=within_fat,
     )
 
     feasible = (
@@ -671,13 +723,15 @@ def solve_meal_option(
             reasons.append(
                 f"proteína ({totals.protein_g}g) com desvio de {deviation.protein_g:+.1f}g fora da tolerância de ±{tol.protein_g}g"
             )
-        if not within_tolerance.carb:
+        # Só aparecer quando o carboidrato passar do teto
+        if deviation.carb_g > tol.carb_g + 1e-4:
             reasons.append(
-                f"carboidrato ({totals.carb_g}g) com desvio de {deviation.carb_g:+.1f}g fora da tolerância de ±{tol.carb_g}g"
+                f"carboidrato ({totals.carb_g}g) com desvio de {deviation.carb_g:+.1f}g acima do teto de +{tol.carb_g}g"
             )
-        if not within_tolerance.fat:
+        # Só aparecer quando a gordura passar do teto
+        if deviation.fat_g > tol.fat_g + 1e-4:
             reasons.append(
-                f"gordura ({totals.fat_g}g) com desvio de {deviation.fat_g:+.1f}g fora da tolerância de ±{tol.fat_g}g"
+                f"gordura ({totals.fat_g}g) com desvio de {deviation.fat_g:+.1f}g acima do teto de +{tol.fat_g}g"
             )
 
         suggestions_list: list[str] = []
@@ -697,12 +751,17 @@ def solve_meal_option(
                     "proteína acima da meta mesmo com alimentos no limite mínimo; reduza min_g ou troque por fonte de proteína mais magra"
                 )
 
-            if not within_tolerance.fat and deviation.fat_g > 0:
+            if deviation.fat_g > tol.fat_g:
                 fatty_foods = sorted(active_foods, key=lambda x: x["f_per_g"], reverse=True)
                 if fatty_foods and fatty_foods[0]["f_per_g"] > 0.05:
                     suggestions_list.append(
                         f"gordura do alimento '{fatty_foods[0]['name']}' passa da meta; reduza o limite ou remova o item de gordura"
                     )
+
+            if deviation.carb_g > tol.carb_g:
+                suggestions_list.append(
+                    "carboidrato acima da meta; reduza max_g dos itens de carboidrato ou remova opções ricas em carboidrato"
+                )
 
             if not within_tolerance.kcal and deviation.kcal_pct > 0:
                 suggestions_list.append(

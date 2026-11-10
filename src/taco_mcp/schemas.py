@@ -154,7 +154,7 @@ class FitMealsInput(BaseModel):
 
 class HouseholdMeasure(BaseModel):
     """Household measure for a food portion."""
-    quantity: Union[int, float]
+    quantity: Union[int, float, str]
     unit: str
     note: Optional[str] = None
 

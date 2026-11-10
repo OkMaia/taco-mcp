@@ -218,9 +218,9 @@
 
 - food_id: 226
   description: "Mamão, Papaia, cru"
-  unit: "meia unidade"
-  unit_plural: "meias unidades"
-  grams_per_unit: 140.0
+  unit: "unidade"
+  unit_plural: "unidades"
+  grams_per_unit: 280.0
 
 - food_id: 236
   description: "Melão, cru"

@@ -367,10 +367,16 @@ Calcula as porções em gramas e medidas caseiras para uma ou várias opções d
 
 **Regras da Entrada:**
 - `meals`: de 1 a 30 opções resolvidas de forma independente.
-- `tolerance`: opcional (padrão: `kcal ±10%`, `proteína ±5g`, `carboidrato ±8g`, `gordura ±4g`).
+- `tolerance`: opcional (padrão: `kcal ±10%`, `proteína ±5g`, `carboidrato ±8g`, `gordura ±4g`). Gordura abaixo da meta é aceita e não reprova (tolerância vale apenas para o teto). Carboidrato abaixo da meta também é aceitável quando calorias e proteínas estiverem dentro da tolerância.
 - `role`: `protein`, `carb`, `veg`, `fruit`, `fat`, `free`.
 - `free`: alimentos à vontade (saladas de folhas, temperos): devolvido com `grams: null` e não altera os cálculos calóricos.
-- `min_g`, `max_g`, `step_g`: opcionais (possuem padrões nutricionais sensíveis por papel).
+- `min_g`, `max_g`, `step_g`: opcionais. Padrões por papel:
+  - `protein`: min 30 g, max 250 g, step 10 g
+  - `carb`: min 0 g, max 120 g, step 5 g (se meta de carboidrato < 15 g, max_g é reduzido para 60 g)
+  - `veg`: min 0 g, max 100 g, step 10 g
+  - `fruit`: min 0 g, max 150 g, step 10 g
+  - `fat`: min 0 g, max 10 g, step 5 g
+  - `free`: sem cálculo
 - `food`: ID numérico ou nome do alimento na TACO. Se informado por nome, a correspondência é sinalizada em `matched_from`.
 
 **Resposta:**
@@ -388,7 +394,7 @@ Calcula as porções em gramas e medidas caseiras para uma ou várias opções d
           "role": "protein",
           "grams": 260,
           "household": {
-            "quantity": 7.5,
+            "quantity": 7,
             "unit": "claras",
             "note": "≈"
           },
@@ -400,7 +406,7 @@ Calcula as porções em gramas e medidas caseiras para uma ou várias opções d
           "role": "fruit",
           "grams": 200,
           "household": {
-            "quantity": 13.5,
+            "quantity": 13,
             "unit": "unidades médias",
             "note": "≈"
           },
@@ -440,7 +446,7 @@ Calcula as porções em gramas e medidas caseiras para uma ou várias opções d
 ```
 
 - `totals`: recalculados a partir da base TACO sobre as gramas finais arredondadas.
-- `household`: porção em medida caseira arredondada para meia unidade (com `"≈"` quando arredondada), ou `null` se não houver mapeamento.
+- `household`: porção em medida caseira legível (inteiro para $\ge 3$, meio para $< 3$; meio vira `"1/2 unidade"` no singular; 1 no singular; 2 ou mais no plural; note `"≈"` quando arredondar).
 - `feasible: false`: caso os macros fiquem fora da tolerância ou alimento não seja encontrado, trazendo `message` explicativa e sugestões acionáveis para o usuário/agente ajustar os itens ou metas.
 
 #### Medidas Caseiras e Auditoria

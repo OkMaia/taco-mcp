@@ -544,3 +544,162 @@ def test_performance_batch_12_options():
     assert len(output.results) == 12
     # Should solve 12 options in much less than 2 seconds (usually < 0.1s)
     assert duration < 2.0, f"Batch took too long: {duration:.2f}s"
+
+
+def test_fat_below_target_is_feasible():
+    """
+    Gordura abaixo da meta não reprova:
+    A tolerância de gordura vale apenas para CIMA.
+    Gordura abaixo da meta é aceita e dentro da tolerância (feasible: True).
+    """
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "gordura_baixa",
+                "target": {"kcal": 200.0, "protein_g": 30.0, "carb_g": 15.0, "fat_g": 10.0},
+                "tolerance": {"kcal_pct": 10.0, "protein_g": 5.0, "carb_g": 8.0, "fat_g": 4.0},
+                "items": [
+                    {"food": "Clara de ovo cozida", "role": "protein"},
+                    {"food": "Banana prata", "role": "fruit"},
+                ],
+            }
+        ]
+    }
+
+    output = fit_meals(db, args)
+    res = output.results[0]
+
+    # Gordura obtida é bem menor que a meta de 10g (ex.: < 1g)
+    assert res.totals.fat_g < 2.0
+    assert res.deviation.fat_g < -4.0  # desvio é bem negativo
+    # Deve ser considerado dentro da tolerância e viável
+    assert res.within_tolerance.fat is True
+    assert res.within_tolerance.kcal is True
+    assert res.within_tolerance.protein is True
+    assert res.feasible is True
+    assert res.message is None
+
+
+def test_fat_above_ceiling_is_not_feasible_with_message():
+    """
+    Gordura acima do teto (meta + tolerância) reprova (feasible: False)
+    e mensagem indica que passou do teto.
+    """
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "gordura_alta",
+                "target": {"kcal": 150.0, "protein_g": 20.0, "carb_g": 5.0, "fat_g": 2.0},
+                "tolerance": {"kcal_pct": 10.0, "protein_g": 5.0, "carb_g": 5.0, "fat_g": 2.0},
+                "items": [
+                    {"food": 486, "role": "protein", "min_g": 100, "max_g": 200},
+                    {"food": 260, "role": "fat", "min_g": 15, "max_g": 30},  # azeite: 15g = 15g gordura
+                ],
+            }
+        ]
+    }
+
+    output = fit_meals(db, args)
+    res = output.results[0]
+
+    assert res.totals.fat_g >= 15.0
+    assert res.within_tolerance.fat is False
+    assert res.feasible is False
+    assert res.message is not None
+    assert "gordura" in res.message.lower()
+    assert "teto" in res.message.lower() or "passa da meta" in res.message.lower()
+
+
+def test_household_measure_formatting_cases():
+    """
+    Formatação das medidas caseiras:
+    - 1/2 unidade (quantidade em texto fracionário e singular)
+    - 1 unidade média (quantidade inteira 1 no singular)
+    - 12 unidades (quantidade inteira >= 2 no plural; nunca fracionária como 12.5)
+    """
+    measures = load_household_measures()
+
+    # 1. '1/2 unidade' (Mamão Papaia 140g / 280g)
+    m_half = calculate_household_measure(226, 140, measures)
+    assert m_half is not None
+    assert m_half.quantity == "1/2"
+    assert m_half.unit == "unidade"
+    assert f"{m_half.quantity} {m_half.unit}" == "1/2 unidade"
+
+    # Pão francês 25g (50g por unidade)
+    m_pao_half = calculate_household_measure(53, 25, measures)
+    assert m_pao_half is not None
+    assert m_pao_half.quantity == "1/2"
+    assert m_pao_half.unit == "unidade"
+    assert f"{m_pao_half.quantity} {m_pao_half.unit}" == "1/2 unidade"
+
+    # 2. '1 unidade média' (Banana nanica 70g / 70g)
+    m_one = calculate_household_measure(179, 70, measures)
+    assert m_one is not None
+    assert m_one.quantity == 1
+    assert m_one.unit == "unidade média"
+    assert f"{m_one.quantity} {m_one.unit}" == "1 unidade média"
+
+    # 3. '12 unidades' (Pão francês 600g / 50g)
+    m_pao_12 = calculate_household_measure(53, 600, measures)
+    assert m_pao_12 is not None
+    assert m_pao_12.quantity == 12
+    assert m_pao_12.unit == "unidades"
+    assert f"{m_pao_12.quantity} {m_pao_12.unit}" == "12 unidades"
+
+    # Morango 180g / 15g -> 12 unidades médias (inteiro, sem decimais)
+    m_strawberry_12 = calculate_household_measure(239, 180, measures)
+    assert m_strawberry_12 is not None
+    assert m_strawberry_12.quantity == 12
+    assert m_strawberry_12.unit == "unidades médias"
+
+    # Caso com 3 ou mais arredonda para inteiro (não deve devolver 12.5)
+    m_strawberry_frac = calculate_household_measure(239, 190, measures)
+    assert m_strawberry_frac is not None
+    assert isinstance(m_strawberry_frac.quantity, int)
+    assert m_strawberry_frac.quantity == 13
+    assert m_strawberry_frac.unit == "unidades médias"
+
+
+def test_default_role_limits_brocolis_max_100_and_low_carb():
+    """
+    Limites padrão por papel:
+    - brócolis (role veg) nunca passa de 100 g sem max_g informado.
+    - carb com meta < 15 g tem max_g reduzido para 60 g.
+    """
+    db = get_db()
+
+    # Brócolis com meta alta de calorias/veg
+    args_veg = {
+        "meals": [
+            {
+                "id": "teste_brocolis",
+                "target": {"kcal": 300.0, "protein_g": 10.0, "carb_g": 30.0, "fat_g": 2.0},
+                "items": [
+                    {"food": "Brócolis, cozido", "role": "veg"},  # sem min_g nem max_g
+                ],
+            }
+        ]
+    }
+    out_veg = fit_meals(db, args_veg)
+    item_brocolis = out_veg.results[0].items[0]
+    assert item_brocolis.grams <= 100, f"Brócolis passou de 100g: {item_brocolis.grams}g"
+
+    # Meta de carb < 15g reduz max do carb para 60g
+    args_low_carb = {
+        "meals": [
+            {
+                "id": "teste_low_carb",
+                "target": {"kcal": 300.0, "protein_g": 35.0, "carb_g": 12.0, "fat_g": 3.0},
+                "items": [
+                    {"food": 410, "role": "protein"},
+                    {"food": 3, "role": "carb"},  # arroz, sem max_g informado
+                ],
+            }
+        ]
+    }
+    out_carb = fit_meals(db, args_low_carb)
+    item_arroz = [it for it in out_carb.results[0].items if it.food_id == 3][0]
+    assert item_arroz.grams <= 60, f"Arroz passou de 60g em meta low carb: {item_arroz.grams}g"
