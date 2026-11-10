@@ -321,7 +321,10 @@ Calculates food portion amounts (in grams) and household measures for one or mul
             "unit": "claras",
             "note": "≈"
           },
-          "matched_from": "Clara de ovo cozida"
+          "matched_from": "Clara de ovo cozida",
+          "exact_match": true,
+          "match_note": null,
+          "alternatives": null
         },
         {
           "food_id": 239,
@@ -333,7 +336,10 @@ Calculates food portion amounts (in grams) and household measures for one or mul
             "unit": "unidades médias",
             "note": "≈"
           },
-          "matched_from": "Morango, cru"
+          "matched_from": "Morango, cru",
+          "exact_match": true,
+          "match_note": null,
+          "alternatives": null
         },
         {
           "food_id": 78,
@@ -341,7 +347,10 @@ Calculates food portion amounts (in grams) and household measures for one or mul
           "role": "free",
           "grams": null,
           "household": null,
-          "matched_from": "Salada de folhas"
+          "matched_from": "Salada de folhas",
+          "exact_match": true,
+          "match_note": null,
+          "alternatives": null
         }
       ],
       "totals": {

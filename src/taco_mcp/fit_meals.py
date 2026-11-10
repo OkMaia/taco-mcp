@@ -32,7 +32,7 @@ VALID_ROLES = frozenset({"protein", "carb", "veg", "fruit", "fat", "free"})
 ROLE_DEFAULTS = {
     "protein": {"min_g": 30.0, "max_g": 250.0, "step_g": 10.0},
     "carb": {"min_g": 0.0, "max_g": 120.0, "step_g": 5.0},
-    "veg": {"min_g": 0.0, "max_g": 100.0, "step_g": 10.0},
+    "veg": {"min_g": 50.0, "max_g": 100.0, "step_g": 10.0},
     "fruit": {"min_g": 0.0, "max_g": 150.0, "step_g": 10.0},
     "fat": {"min_g": 0.0, "max_g": 10.0, "step_g": 5.0},
     "free": {"min_g": 0.0, "max_g": 0.0, "step_g": 1.0},
@@ -160,6 +160,59 @@ def load_household_measures() -> dict[int, dict[str, Any]]:
     return _HOUSEHOLD_MEASURES_CACHE
 
 
+def pluralize_unit(unit: str) -> str:
+    """Return the plural form of a household unit, handling compound phrases."""
+    comps = {
+        "colher de sopa": "colheres de sopa",
+        "colher de cha": "colheres de chá",
+        "colher de chá": "colheres de chá",
+        "fatia media": "fatias médias",
+        "fatia média": "fatias médias",
+        "unidade media": "unidades médias",
+        "unidade média": "unidades médias",
+        "filé médio": "filés médios",
+        "file medio": "filés médios",
+        "filé": "filés",
+        "file": "filés",
+        "pedaço médio": "pedaços médios",
+        "pedaco medio": "pedaços médios",
+        "bife": "bifes",
+        "ramo": "ramos",
+        "folha": "folhas",
+        "unidade": "unidades",
+        "clara": "claras",
+        "ovo": "ovos",
+        "gema": "gemas",
+        "porção": "porções",
+        "porcao": "porções",
+    }
+    unit_lower = unit.lower().strip()
+    if unit_lower in comps:
+        return comps[unit_lower]
+    words = unit.split()
+    if len(words) == 1:
+        w = words[0]
+        if w.endswith(("a", "e", "o", "á", "é", "ó")):
+            return w + "s"
+        elif w.endswith(("r", "z")):
+            return w + "es"
+        elif w.endswith("m"):
+            return w[:-1] + "ns"
+        elif w.endswith("l"):
+            return w[:-1] + "is"
+        return w + "s"
+    else:
+        first = words[0]
+        if first.endswith(("a", "e", "o", "á", "é", "ó")):
+            first_pl = first + "s"
+        elif first.endswith(("r", "z")):
+            first_pl = first + "es"
+        else:
+            first_pl = first + "s"
+        rest = " ".join(words[1:])
+        return f"{first_pl} {rest}"
+
+
 def calculate_household_measure(
     food_id: int,
     grams: Optional[Union[int, float]],
@@ -193,24 +246,154 @@ def calculate_household_measure(
     note = "≈" if is_rounded else None
 
     # - Meio vira "1/2 unidade" (texto com a unidade no singular).
-    # - Inteiro 1 vira singular ("1 unidade média"); 2 ou mais, plural.
-    # - Nunca devolva quantidade fracionária com unidade no plural.
+    # - Quantidade 1 e "1/2" ficam no singular ("1 filé médio", "1/2 unidade").
+    # - Quando a quantidade for maior que 1 (inclusive fracionária, como 1,5 ou 2,5), a unidade vai para o plural:
+    #   "2,5 colheres de sopa", "1,5 filés", "2,5 fatias médias", "1,5 fatias médias".
+    unit_singular = entry["unit"]
+    unit_plural = entry.get("unit_plural") or pluralize_unit(unit_singular)
+
     quantity: Union[int, float, str]
     if rounded_val == 0.5:
         quantity = "1/2"
-        unit = entry["unit"]
-    elif rounded_val.is_integer():
-        quantity = int(rounded_val)
-        if quantity == 1:
-            unit = entry["unit"]
-        else:
-            unit = entry.get("unit_plural", entry["unit"])
+        unit = unit_singular
+    elif rounded_val == 1.0:
+        quantity = 1
+        unit = unit_singular
     else:
-        # Fracionário (ex.: 1.5, 2.5) -> singular ("Nunca devolva quantidade fracionária com unidade no plural")
-        quantity = rounded_val
-        unit = entry["unit"]
+        if rounded_val.is_integer():
+            quantity = int(rounded_val)
+        else:
+            quantity = rounded_val
+        unit = unit_plural
 
     return HouseholdMeasure(quantity=quantity, unit=unit, note=note)
+
+
+PREP_STATES = {
+    "cru": "cru", "crua": "cru", "crus": "cru", "cruas": "cru",
+    "cozido": "cozido", "cozida": "cozido", "cozidos": "cozido", "cozidas": "cozido",
+    "grelhado": "grelhado", "grelhada": "grelhado", "grelhados": "grelhado", "grelhadas": "grelhado",
+    "assado": "assado", "assada": "assado", "assados": "assado", "assadas": "assado",
+    "frito": "frito", "frita": "frito", "fritos": "frito", "fritas": "frito",
+    "refogado": "refogado", "refogada": "refogado", "refogados": "refogado", "refogadas": "refogado",
+    "vapor": "vapor",
+    "po": "po", "pó": "po",
+}
+
+
+def extract_prep(text: str) -> tuple[Optional[str], Optional[str]]:
+    """Extract raw and canonical preparation state from text."""
+    from .normalize import remove_accents
+    text_clean = remove_accents(text.lower())
+    tokens = re.findall(r"\b[a-z]+\b", text_clean)
+    for t in tokens:
+        if t in PREP_STATES:
+            return t, PREP_STATES[t]
+    return None, None
+
+
+def get_alternatives(db: TacoDB, requested_name: str, chosen_food_id: int) -> list[str]:
+    """Find up to 3 close alternative food names in TACO database."""
+    from .normalize import remove_accents
+    req_clean = remove_accents(requested_name.lower().strip())
+    weak_words = {'de', 'com', 'sem', 'tipo', 'pronto', 'a', 'o', 'e', 'da', 'do', 'em'}
+    tokens = [w for w in re.findall(r"\b[a-z]+\b", req_clean) if w not in weak_words]
+    alts: list[str] = []
+
+    conn = db._get_connection()
+    try:
+        search_words = [w for w in tokens if len(w) >= 3 and w not in PREP_STATES]
+        if search_words:
+            fts_q = " OR ".join(search_words)
+            cursor = conn.execute(
+                """SELECT foods.id, foods.description
+                   FROM foods_fts
+                   JOIN foods ON foods_fts.rowid = foods.id
+                   WHERE foods_fts MATCH ?
+                   ORDER BY rank
+                   LIMIT 6""",
+                (fts_q,),
+            )
+            for row in cursor.fetchall():
+                if row[0] != chosen_food_id and row[1] not in alts:
+                    alts.append(row[1])
+
+        chosen = db.get_food(chosen_food_id)
+        if len(alts) < 3 and chosen and chosen.category:
+            cursor = conn.execute(
+                """SELECT id, description FROM foods
+                   WHERE category = ? AND id != ?
+                   LIMIT 6""",
+                (chosen.category, chosen_food_id),
+            )
+            for row in cursor.fetchall():
+                if row[0] != chosen_food_id and row[1] not in alts:
+                    alts.append(row[1])
+                if len(alts) >= 3:
+                    break
+    finally:
+        conn.close()
+
+    if len(alts) < 3:
+        for sugg in find_suggestions(db, requested_name):
+            if sugg not in alts:
+                alts.append(sugg)
+            if len(alts) >= 3:
+                break
+
+    return alts[:3]
+
+
+def check_exact_match(
+    requested: Union[int, str],
+    resolved_id: int,
+    resolved_name: str,
+    db: TacoDB,
+) -> tuple[bool, Optional[str], Optional[list[str]]]:
+    """
+    Check if resolved food matches the requested food name and prep state.
+    Returns: (exact_match, match_note, alternatives)
+    """
+    if isinstance(requested, int) or (isinstance(requested, str) and requested.strip().isdigit()):
+        return True, None, None
+
+    from .normalize import remove_accents
+    req_str = str(requested).strip()
+    req_clean = remove_accents(req_str.lower())
+    res_clean = remove_accents(resolved_name.lower())
+
+    req_prep_raw, req_prep_canon = extract_prep(req_str)
+    res_prep_raw, res_prep_canon = extract_prep(resolved_name)
+
+    weak_words = {'de', 'com', 'sem', 'tipo', 'pronto', 'a', 'o', 'e', 'da', 'do', 'em', 'para', 'na', 'no'}
+    req_tokens = [w for w in re.findall(r"\b[a-z]+\b", req_clean) if w not in PREP_STATES and w not in weak_words]
+    res_tokens = set(re.findall(r"\b[a-z]+\b", res_clean))
+
+    name_matched = all(tok in res_tokens for tok in req_tokens) if req_tokens else (req_clean in res_clean)
+
+    prep_matched = True
+    prep_note = None
+    if req_prep_canon is not None:
+        if res_prep_canon != req_prep_canon:
+            prep_matched = False
+            prep_note = f"estado de preparo diferente: pedido {req_prep_raw}, usado {res_prep_raw or 'não especificado'}"
+
+    exact_match = name_matched and prep_matched
+    match_note = None
+    alternatives = None
+
+    if not exact_match:
+        alimento_base = resolved_name.split(",")[0].strip().lower()
+        if not name_matched and not prep_matched:
+            match_note = f"espécie diferente: pedido {req_str}, usado {alimento_base}; {prep_note}"
+        elif not name_matched:
+            match_note = f"espécie diferente: pedido {req_str}, usado {alimento_base}"
+        else:
+            match_note = prep_note
+
+        alternatives = get_alternatives(db, req_str, resolved_id)
+
+    return exact_match, match_note, alternatives
 
 
 def find_suggestions(db: TacoDB, query: str) -> list[str]:
@@ -404,14 +587,19 @@ def solve_meal_option(
             )
 
         defaults = ROLE_DEFAULTS.get(item.role, {"min_g": 0.0, "max_g": 100.0, "step_g": 10.0})
-        min_g = item.min_g if item.min_g is not None else defaults["min_g"]
-        if item.max_g is not None:
-            max_g = item.max_g
+        if item.role == "veg":
+            # Itens com role "veg" têm min_g padrão de 50 g (e max_g 100 g)
+            min_g = item.min_g if item.min_g is not None else 50.0
+            max_g = item.max_g if item.max_g is not None else 100.0
         else:
-            if item.role == "carb" and target.carb_g < LOW_CARB_THRESHOLD_G:
-                max_g = LOW_CARB_DEFAULT_MAX_G
+            min_g = item.min_g if item.min_g is not None else defaults["min_g"]
+            if item.max_g is not None:
+                max_g = item.max_g
             else:
-                max_g = defaults["max_g"]
+                if item.role == "carb" and target.carb_g < LOW_CARB_THRESHOLD_G:
+                    max_g = LOW_CARB_DEFAULT_MAX_G
+                else:
+                    max_g = defaults["max_g"]
         step_g = item.step_g if item.step_g is not None else defaults["step_g"]
 
         if min_g < 0:
@@ -451,11 +639,18 @@ def solve_meal_option(
                 suggestions=suggestions or None,
             )
 
+        exact_match, match_note, alternatives = check_exact_match(
+            item.food, food_id, desc, db
+        )
+
         item_entry = {
             "food_id": food_id,
             "name": desc,
             "role": item.role,
             "matched_from": matched_from,
+            "exact_match": exact_match,
+            "match_note": match_note,
+            "alternatives": alternatives,
             "macros": macros,
             "min_g": min_g,
             "max_g": max_g,
@@ -608,6 +803,7 @@ def solve_meal_option(
 
     # Step 4: Map grams back to items and recalculate totals from TACO
     final_items: list[FitMealItemResult] = []
+    removed_zero_items: list[str] = []
     tot_kcal = 0.0
     tot_p = 0.0
     tot_c = 0.0
@@ -624,11 +820,19 @@ def solve_meal_option(
                     grams=None,
                     household=None,
                     matched_from=meta["matched_from"],
+                    exact_match=meta.get("exact_match", True),
+                    match_note=meta.get("match_note"),
+                    alternatives=meta.get("alternatives"),
                 )
             )
         else:
             g_val = best_grams[active_idx]
             active_idx += 1
+
+            # Regra geral: nenhum item não-"free" deve sair com grams: 0
+            if g_val <= 0:
+                removed_zero_items.append(meta["name"])
+                continue
 
             macros = meta["macros"]
             factor = g_val / 100.0
@@ -658,6 +862,9 @@ def solve_meal_option(
                     grams=grams_display,
                     household=household,
                     matched_from=meta["matched_from"],
+                    exact_match=meta.get("exact_match", True),
+                    match_note=meta.get("match_note"),
+                    alternatives=meta.get("alternatives"),
                 )
             )
 
@@ -759,9 +966,15 @@ def solve_meal_option(
                     )
 
             if deviation.carb_g > tol.carb_g:
-                suggestions_list.append(
-                    "carboidrato acima da meta; reduza max_g dos itens de carboidrato ou remova opções ricas em carboidrato"
-                )
+                has_veg = any(f["role"] == "veg" for f in active_foods)
+                carb_foods = [f for f in active_foods if f["role"] == "carb"]
+                carb_at_min = (not carb_foods) or all(best_grams[active_foods.index(f)] <= f["min_g"] + 1e-4 for f in carb_foods)
+                if has_veg and carb_at_min:
+                    suggestions_list.append("carboidrato acima do teto mesmo com o carboidrato principal reduzido")
+                else:
+                    suggestions_list.append(
+                        "carboidrato acima da meta; reduza max_g dos itens de carboidrato ou remova opções ricas em carboidrato"
+                    )
 
             if not within_tolerance.kcal and deviation.kcal_pct > 0:
                 suggestions_list.append(
@@ -775,6 +988,13 @@ def solve_meal_option(
         message = "; ".join(reasons)
         if suggestions_list:
             message += ". Sugestão: " + "; ".join(suggestions_list)
+
+    if removed_zero_items:
+        removed_str = f"alimento(s) {', '.join([repr(n) for n in removed_zero_items])} removido(s) da refeição por ter porção calculada em 0g"
+        if message:
+            message = f"{message}. {removed_str}"
+        else:
+            message = removed_str
 
     return FitMealOptionResult(
         id=option.id,

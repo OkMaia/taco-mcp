@@ -167,6 +167,9 @@ class FitMealItemResult(BaseModel):
     grams: Optional[Union[int, float]] = None
     household: Optional[HouseholdMeasure] = None
     matched_from: Optional[str] = None
+    exact_match: bool = True
+    match_note: Optional[str] = None
+    alternatives: Optional[List[str]] = None
 
 
 class FitTotals(BaseModel):

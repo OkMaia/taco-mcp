@@ -703,3 +703,173 @@ def test_default_role_limits_brocolis_max_100_and_low_carb():
     out_carb = fit_meals(db, args_low_carb)
     item_arroz = [it for it in out_carb.results[0].items if it.food_id == 3][0]
     assert item_arroz.grams <= 60, f"Arroz passou de 60g em meta low carb: {item_arroz.grams}g"
+
+
+def test_veg_never_zero_and_no_active_item_zero_grams():
+    """
+    1. Legume nunca sai com 0 g:
+       Itens com role 'veg' têm min_g padrão de 50 g (e max_g 100 g).
+    2. Regra geral: nenhum item não-'free' deve sair com grams: 0.
+       Se um item precisar sair, é removido de 'items' e avisado em 'message'. Nunca devolve 0 g.
+    """
+    db = get_db()
+
+    # Almoço onde antes saía abobrinha 0g
+    args = {
+        "meals": [
+            {
+                "id": "almoco_com_veg",
+                "target": {"kcal": 281.4, "protein_g": 40.2, "carb_g": 17.6, "fat_g": 5.6},
+                "items": [
+                    {"food": "peito de frango grelhado", "role": "protein"},
+                    {"food": "arroz cozido", "role": "carb"},
+                    {"food": "abobrinha cozida", "role": "veg"},  # sem min_g informado -> deve ter min 50g
+                    {"food": "alface", "role": "free"},
+                ],
+            }
+        ]
+    }
+
+    out = fit_meals(db, args)
+    res = out.results[0]
+
+    # Verifica que abobrinha está presente e tem >= 50g (nunca 0g)
+    veg_items = [it for it in res.items if it.role == "veg"]
+    assert len(veg_items) == 1
+    assert veg_items[0].grams >= 50
+    assert veg_items[0].grams <= 100
+
+    # Verifica que NENHUM item não-free tem grams == 0
+    for it in res.items:
+        if it.role != "free":
+            assert it.grams is not None
+            assert it.grams > 0, f"Item {it.name} saiu com {it.grams}g (deveria ser > 0)"
+
+
+def test_household_measure_plural_cases_explicit():
+    """
+    Testa rigorosamente as regras de plural da medida caseira:
+    - Quantidade maior que 1 (inclusive fracionária, como 1,5 ou 2,5) vai para o plural:
+      '2,5 colheres de sopa', '1,5 filés', '2,5 fatias médias', '1,5 fatias médias'.
+    - Quantidade 1 e '1/2' ficam no singular:
+      '1 filé médio', '1/2 unidade'.
+    - Unidades compostas:
+      'colher de sopa' -> 'colheres de sopa'
+      'fatia média' -> 'fatias médias'
+      'unidade média' -> 'unidades médias'
+      'filé médio' -> 'filés médios'
+    """
+    measures = load_household_measures()
+
+    # 1. '2,5 colheres de sopa' (Arroz cozido: 25g por colher -> 62.5g ~ 65g)
+    # Com 62.5g -> raw_qty 2.5
+    m_arroz_25 = calculate_household_measure(3, 62.5, measures)
+    assert m_arroz_25 is not None
+    assert m_arroz_25.quantity == 2.5
+    assert m_arroz_25.unit == "colheres de sopa"
+
+    # 2. '1,5 filés' (Merluza 301: 100g por filé -> 150g = 1.5 filés)
+    m_merluza_15 = calculate_household_measure(301, 150, measures)
+    assert m_merluza_15 is not None
+    assert m_merluza_15.quantity == 1.5
+    assert m_merluza_15.unit == "filés"
+
+    # 3. '2,5 fatias médias' (Batata doce 88: 50g por fatia -> 125g = 2.5 fatias médias)
+    m_batata_25 = calculate_household_measure(88, 125, measures)
+    assert m_batata_25 is not None
+    assert m_batata_25.quantity == 2.5
+    assert m_batata_25.unit == "fatias médias"
+
+    # 4. '1,5 fatias médias' (Batata doce 88: 75g = 1.5 fatias médias)
+    m_batata_15 = calculate_household_measure(88, 75, measures)
+    assert m_batata_15 is not None
+    assert m_batata_15.quantity == 1.5
+    assert m_batata_15.unit == "fatias médias"
+
+    # 5. '1 filé médio' (Frango grelhado 410: 100g = 1 filé médio)
+    m_frango_1 = calculate_household_measure(410, 100, measures)
+    assert m_frango_1 is not None
+    assert m_frango_1.quantity == 1
+    assert m_frango_1.unit == "filé médio"
+
+    # 6. '1/2 unidade' (Pão francês 53: 25g = 1/2 unidade)
+    m_pao_half = calculate_household_measure(53, 25, measures)
+    assert m_pao_half is not None
+    assert m_pao_half.quantity == "1/2"
+    assert m_pao_half.unit == "unidade"
+
+    # 7. '1,5 filés médios' (Frango grelhado 410: 150g = 1.5 filés médios)
+    m_frango_15 = calculate_household_measure(410, 150, measures)
+    assert m_frango_15 is not None
+    assert m_frango_15.quantity == 1.5
+    assert m_frango_15.unit == "filés médios"
+
+    # 8. '1,5 unidades médias' (Batata baroa 86: 150g = 1.5 unidades médias)
+    m_baroa_15 = calculate_household_measure(86, 150, measures)
+    assert m_baroa_15 is not None
+    assert m_baroa_15.quantity == 1.5
+    assert m_baroa_15.unit == "unidades médias"
+
+
+def test_exact_match_false_and_true_cases():
+    """
+    Testa o aviso de correspondência:
+    - exact_match é false para 'tilápia' (se a TACO usar outra espécie, ex. merluza)
+    - exact_match é false para 'vagem cozida' (quando a TACO só tem crua)
+    - alternatives preenchido com até 3 nomes quando exact_match é false
+    - exact_match é true para 'peito de frango grelhado' e 'arroz cozido'
+    """
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "teste_match",
+                "target": {"kcal": 300.0, "protein_g": 35.0, "carb_g": 20.0, "fat_g": 5.0},
+                "items": [
+                    {"food": "tilápia", "role": "protein"},
+                    {"food": "vagem cozida", "role": "veg"},
+                    {"food": "peito de frango grelhado", "role": "protein"},
+                    {"food": "arroz cozido", "role": "carb"},
+                ],
+            }
+        ]
+    }
+
+    out = fit_meals(db, args)
+    items_by_role_and_name = {it.matched_from: it for it in out.results[0].items}
+
+    # 1. tilápia -> exact_match False, espécie diferente
+    it_tilapia = items_by_role_and_name.get("tilápia")
+    assert it_tilapia is not None
+    assert it_tilapia.exact_match is False
+    assert it_tilapia.match_note is not None
+    assert "espécie diferente" in it_tilapia.match_note
+    assert "tilápia" in it_tilapia.match_note.lower()
+    assert "merluza" in it_tilapia.match_note.lower()
+    assert it_tilapia.alternatives is not None
+    assert 1 <= len(it_tilapia.alternatives) <= 3
+
+    # 2. vagem cozida -> exact_match False, estado de preparo diferente
+    it_vagem = items_by_role_and_name.get("vagem cozida")
+    assert it_vagem is not None
+    assert it_vagem.exact_match is False
+    assert it_vagem.match_note is not None
+    assert "estado de preparo diferente" in it_vagem.match_note
+    assert "cozida" in it_vagem.match_note
+    assert "crua" in it_vagem.match_note
+    assert it_vagem.alternatives is not None
+    assert 1 <= len(it_vagem.alternatives) <= 3
+
+    # 3. peito de frango grelhado -> exact_match True
+    it_frango = items_by_role_and_name.get("peito de frango grelhado")
+    assert it_frango is not None
+    assert it_frango.exact_match is True
+    assert it_frango.match_note is None
+    assert it_frango.alternatives is None
+
+    # 4. arroz cozido -> exact_match True
+    it_arroz = items_by_role_and_name.get("arroz cozido")
+    assert it_arroz is not None
+    assert it_arroz.exact_match is True
+    assert it_arroz.match_note is None
+    assert it_arroz.alternatives is None

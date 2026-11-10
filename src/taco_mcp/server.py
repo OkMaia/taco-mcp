@@ -158,7 +158,10 @@ async def list_tools() -> list[Tool]:
                 "para uma ou várias refeições/opções em lote, atingindo as metas de calorias e macronutrientes. "
                 "O agente de IA deve apenas escolher os alimentos e seus papéis (roles), chamar fit_meals UMA única vez "
                 "com todas as opções desejadas no lote, e usar diretamente os totais e porções devolvidos, SEM recalcular "
-                "ou fazer laços iterativos de ajuste."
+                "ou fazer laços iterativos de ajuste. "
+                "O agente deve conferir o campo 'exact_match' em cada item retornado e, caso seja false (por exemplo, "
+                "quando a espécie ou o estado de preparo diferir do pedido), trocar o alimento ou consultar o usuário "
+                "usando as opções sugeridas em 'alternatives'."
             ),
             inputSchema={
                 "type": "object",
