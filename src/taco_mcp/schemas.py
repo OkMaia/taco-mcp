@@ -1,6 +1,6 @@
 """Pydantic schemas for MCP tool inputs/outputs."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel
 
 
@@ -109,3 +109,102 @@ class CalculateMealMacrosOutput(BaseModel):
     items: List[MealItemOutput]
     total: MealTotal
     warnings: List[str] = []
+
+
+# ========== fit_meals tool schemas ==========
+
+
+class FitTarget(BaseModel):
+    """Target macronutrients for a meal."""
+    kcal: float
+    protein_g: float
+    carb_g: float
+    fat_g: float
+
+
+class FitTolerance(BaseModel):
+    """Tolerance for meal fitting."""
+    kcal_pct: float = 10.0
+    protein_g: float = 5.0
+    carb_g: float = 8.0
+    fat_g: float = 4.0
+
+
+class FitMealItemInput(BaseModel):
+    """Item to fit in a meal."""
+    food: Union[int, str]
+    role: str
+    min_g: Optional[float] = None
+    max_g: Optional[float] = None
+    step_g: Optional[float] = None
+
+
+class FitMealOptionInput(BaseModel):
+    """A single meal option to be fitted."""
+    id: str
+    target: FitTarget
+    tolerance: Optional[FitTolerance] = None
+    items: List[FitMealItemInput]
+
+
+class FitMealsInput(BaseModel):
+    """Input for fit_meals tool."""
+    meals: List[FitMealOptionInput]
+
+
+class HouseholdMeasure(BaseModel):
+    """Household measure for a food portion."""
+    quantity: Union[int, float]
+    unit: str
+    note: Optional[str] = None
+
+
+class FitMealItemResult(BaseModel):
+    """Fitted food item result."""
+    food_id: Optional[int] = None
+    name: str
+    role: str
+    grams: Optional[Union[int, float]] = None
+    household: Optional[HouseholdMeasure] = None
+    matched_from: Optional[str] = None
+
+
+class FitTotals(BaseModel):
+    """Calculated total macronutrients."""
+    kcal: float = 0.0
+    protein_g: float = 0.0
+    carb_g: float = 0.0
+    fat_g: float = 0.0
+
+
+class FitDeviation(BaseModel):
+    """Deviation from the target."""
+    kcal_pct: float = 0.0
+    protein_g: float = 0.0
+    carb_g: float = 0.0
+    fat_g: float = 0.0
+
+
+class FitWithinTolerance(BaseModel):
+    """Whether macros are within specified tolerance."""
+    kcal: bool = False
+    protein: bool = False
+    carb: bool = False
+    fat: bool = False
+
+
+class FitMealOptionResult(BaseModel):
+    """Result for a single meal option."""
+    id: str
+    feasible: bool
+    items: List[FitMealItemResult] = []
+    totals: FitTotals = FitTotals()
+    deviation: Optional[FitDeviation] = None
+    within_tolerance: FitWithinTolerance = FitWithinTolerance()
+    message: Optional[str] = None
+    suggestions: Optional[List[str]] = None
+
+
+class FitMealsOutput(BaseModel):
+    """Output for fit_meals tool."""
+    results: List[FitMealOptionResult]

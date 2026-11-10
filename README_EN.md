@@ -92,6 +92,7 @@ Tools become available as:
 - `mcp_taco_get_food`
 - `mcp_taco_calculate_macros`
 - `mcp_taco_calculate_meal_macros`
+- `mcp_taco_fit_meals`
 - `mcp_taco_add_custom_food`
 - `mcp_taco_list_custom_foods`
 - `mcp_taco_delete_custom_food`
@@ -246,6 +247,124 @@ Calculate total macros for a meal with multiple items.
     "carbs_g": 42.15,
     "fat_g": 2.8
   }
+}
+```
+
+#### `fit_meals` - Batch Deterministic Meal Portion Fitting
+
+Calculates food portion amounts (in grams) and household measures for one or multiple meal options in a single call to meet calorie and macro targets.
+
+> **Instruction for AI Agents:** The agent selects foods and their roles (`role`), calls `fit_meals` **ONCE** with all options in batch, and directly uses the returned totals and amounts **without recalculating** or running trial-and-error adjustment loops.
+
+**Why use this:** Eliminates unstable, multi-turn LLM trial-and-error loops that attempt to adjust gram amounts until matching macros. Fitting is performed deterministically via constrained optimization in milliseconds.
+
+**Input (`meals` accepts 1 to 30 options):**
+
+```json
+{
+  "meals": [
+    {
+      "id": "cafe_opcao_1",
+      "target": {
+        "kcal": 234.5,
+        "protein_g": 33.5,
+        "carb_g": 14.7,
+        "fat_g": 4.6
+      },
+      "tolerance": {
+        "kcal_pct": 10,
+        "protein_g": 5,
+        "carb_g": 8,
+        "fat_g": 4
+      },
+      "items": [
+        {
+          "food": "Clara de ovo cozida",
+          "role": "protein",
+          "min_g": 30,
+          "max_g": 300,
+          "step_g": 10
+        },
+        {
+          "food": "Morango, cru",
+          "role": "fruit",
+          "min_g": 30,
+          "max_g": 200,
+          "step_g": 10
+        },
+        {
+          "food": "Salada de folhas",
+          "role": "free"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "id": "cafe_opcao_1",
+      "feasible": true,
+      "items": [
+        {
+          "food_id": 486,
+          "name": "Ovo, de galinha, clara, cozida/10minutos",
+          "role": "protein",
+          "grams": 260,
+          "household": {
+            "quantity": 7.5,
+            "unit": "claras",
+            "note": "≈"
+          },
+          "matched_from": "Clara de ovo cozida"
+        },
+        {
+          "food_id": 239,
+          "name": "Morango, cru",
+          "role": "fruit",
+          "grams": 200,
+          "household": {
+            "quantity": 13.5,
+            "unit": "unidades médias",
+            "note": "≈"
+          },
+          "matched_from": "Morango, cru"
+        },
+        {
+          "food_id": 78,
+          "name": "Alface, crespa, crua",
+          "role": "free",
+          "grams": null,
+          "household": null,
+          "matched_from": "Salada de folhas"
+        }
+      ],
+      "totals": {
+        "kcal": 213.4,
+        "protein_g": 36.64,
+        "carb_g": 13.6,
+        "fat_g": 0.86
+      },
+      "deviation": {
+        "kcal_pct": -9.0,
+        "protein_g": 3.14,
+        "carb_g": -1.1,
+        "fat_g": -3.74
+      },
+      "within_tolerance": {
+        "kcal": true,
+        "protein": true,
+        "carb": true,
+        "fat": true
+      },
+      "message": null
+    }
+  ]
 }
 ```
 

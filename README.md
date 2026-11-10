@@ -94,6 +94,7 @@ As ferramentas aparecerão como:
 - `mcp_taco_get_food` - Detalhes do alimento
 - `mcp_taco_calculate_macros` - Calcular macros por grama
 - `mcp_taco_calculate_meal_macros` - Calcular refeição completa
+- `mcp_taco_fit_meals` - Ajustar porções de refeições em lote de forma determinística
 - `mcp_taco_add_custom_food` - Adicionar alimento customizado
 - `mcp_taco_list_custom_foods` - Listar customizados
 - `mcp_taco_delete_custom_food` - Remover customizado
@@ -134,6 +135,7 @@ TACO:
 - `get_food`
 - `calculate_macros`
 - `calculate_meal_macros`
+- `fit_meals`
 
 O transporte local `stdio` continua oferecendo também as ferramentas de
 alimentos customizados.
@@ -309,6 +311,146 @@ Calcule calorias e macros para uma quantidade específica em gramas.
     "fat_g": 2.8
   }
 }
+```
+
+#### `fit_meals` - Ajustar Porções de Refeições em Lote (Determinístico)
+
+Calcula as porções em gramas e medidas caseiras para uma ou várias opções de refeições de uma só vez, batendo metas de calorias e macronutrientes.
+
+> **Instrução para Agentes de IA:** O agente escolhe os alimentos e seus papéis (`role`), chama `fit_meals` **UMA única vez** com todas as opções do lote, e utiliza diretamente os totais e gramas retornados, **sem recalcular** ou fazer laços iterativos de tentativa e erro.
+
+**Por que usar:** Elimina loops instáveis de tentativa e erro do modelo de IA tentando adivinhar gramas até bater macros. O ajuste é matemático, determinístico e executado em milissegundos.
+
+**Entrada (`meals` aceita de 1 a 30 opções):**
+
+```json
+{
+  "meals": [
+    {
+      "id": "cafe_opcao_1",
+      "target": {
+        "kcal": 234.5,
+        "protein_g": 33.5,
+        "carb_g": 14.7,
+        "fat_g": 4.6
+      },
+      "tolerance": {
+        "kcal_pct": 10,
+        "protein_g": 5,
+        "carb_g": 8,
+        "fat_g": 4
+      },
+      "items": [
+        {
+          "food": "Clara de ovo cozida",
+          "role": "protein",
+          "min_g": 30,
+          "max_g": 300,
+          "step_g": 10
+        },
+        {
+          "food": "Morango, cru",
+          "role": "fruit",
+          "min_g": 30,
+          "max_g": 200,
+          "step_g": 10
+        },
+        {
+          "food": "Salada de folhas",
+          "role": "free"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Regras da Entrada:**
+- `meals`: de 1 a 30 opções resolvidas de forma independente.
+- `tolerance`: opcional (padrão: `kcal ±10%`, `proteína ±5g`, `carboidrato ±8g`, `gordura ±4g`).
+- `role`: `protein`, `carb`, `veg`, `fruit`, `fat`, `free`.
+- `free`: alimentos à vontade (saladas de folhas, temperos): devolvido com `grams: null` e não altera os cálculos calóricos.
+- `min_g`, `max_g`, `step_g`: opcionais (possuem padrões nutricionais sensíveis por papel).
+- `food`: ID numérico ou nome do alimento na TACO. Se informado por nome, a correspondência é sinalizada em `matched_from`.
+
+**Resposta:**
+
+```json
+{
+  "results": [
+    {
+      "id": "cafe_opcao_1",
+      "feasible": true,
+      "items": [
+        {
+          "food_id": 486,
+          "name": "Ovo, de galinha, clara, cozida/10minutos",
+          "role": "protein",
+          "grams": 260,
+          "household": {
+            "quantity": 7.5,
+            "unit": "claras",
+            "note": "≈"
+          },
+          "matched_from": "Clara de ovo cozida"
+        },
+        {
+          "food_id": 239,
+          "name": "Morango, cru",
+          "role": "fruit",
+          "grams": 200,
+          "household": {
+            "quantity": 13.5,
+            "unit": "unidades médias",
+            "note": "≈"
+          },
+          "matched_from": "Morango, cru"
+        },
+        {
+          "food_id": 78,
+          "name": "Alface, crespa, crua",
+          "role": "free",
+          "grams": null,
+          "household": null,
+          "matched_from": "Salada de folhas"
+        }
+      ],
+      "totals": {
+        "kcal": 213.4,
+        "protein_g": 36.64,
+        "carb_g": 13.6,
+        "fat_g": 0.86
+      },
+      "deviation": {
+        "kcal_pct": -9.0,
+        "protein_g": 3.14,
+        "carb_g": -1.1,
+        "fat_g": -3.74
+      },
+      "within_tolerance": {
+        "kcal": true,
+        "protein": true,
+        "carb": true,
+        "fat": true
+      },
+      "message": null
+    }
+  ]
+}
+```
+
+- `totals`: recalculados a partir da base TACO sobre as gramas finais arredondadas.
+- `household`: porção em medida caseira arredondada para meia unidade (com `"≈"` quando arredondada), ou `null` se não houver mapeamento.
+- `feasible: false`: caso os macros fiquem fora da tolerância ou alimento não seja encontrado, trazendo `message` explicativa e sugestões acionáveis para o usuário/agente ajustar os itens ou metas.
+
+#### Medidas Caseiras e Auditoria
+
+Mapeamentos disponíveis em `data/household_measures.yaml`. Para inspecionar alimentos sem medida caseira mapeada:
+
+```bash
+python scripts/list_unmapped_foods.py
+# Ou para verificar todos os 597 alimentos da TACO:
+python scripts/list_unmapped_foods.py --all
 ```
 
 ### Alimentos Customizados

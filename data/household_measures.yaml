@@ -1,0 +1,291 @@
+# Tabela de medidas caseiras para alimentos comuns da TACO
+# Mapeamento oficial de porções e medidas caseiras para planos alimentares
+# food_id: ID do alimento no banco SQLite taco.sqlite
+# unit: unidade no singular
+# unit_plural: unidade no plural
+# grams_per_unit: peso em gramas correspondente a 1 unidade da medida caseira
+
+# --- Ovos ---
+- food_id: 486
+  description: "Ovo, de galinha, clara, cozida/10minutos"
+  unit: "clara"
+  unit_plural: "claras"
+  grams_per_unit: 35.0
+
+- food_id: 488
+  description: "Ovo, de galinha, inteiro, cozido/10minutos"
+  unit: "ovo"
+  unit_plural: "ovos"
+  grams_per_unit: 50.0
+
+- food_id: 487
+  description: "Ovo, de galinha, gema, cozida/10minutos"
+  unit: "gema"
+  unit_plural: "gemas"
+  grams_per_unit: 15.0
+
+- food_id: 490
+  description: "Ovo, de galinha, inteiro, frito"
+  unit: "ovo"
+  unit_plural: "ovos"
+  grams_per_unit: 50.0
+
+# --- Carnes e Aves ---
+- food_id: 410
+  description: "Frango, peito, sem pele, grelhado"
+  unit: "filé médio"
+  unit_plural: "filés médios"
+  grams_per_unit: 100.0
+
+- food_id: 408
+  description: "Frango, peito, sem pele, cozido"
+  unit: "filé médio"
+  unit_plural: "filés médios"
+  grams_per_unit: 100.0
+
+- food_id: 406
+  description: "Frango, peito, com pele, assado"
+  unit: "filé médio"
+  unit_plural: "filés médios"
+  grams_per_unit: 100.0
+
+- food_id: 377
+  description: "Carne, bovina, patinho, sem gordura, grelhado"
+  unit: "bife"
+  unit_plural: "bifes"
+  grams_per_unit: 100.0
+
+- food_id: 376
+  description: "Carne, bovina, patinho, sem gordura, cru"
+  unit: "porção"
+  unit_plural: "porções"
+  grams_per_unit: 100.0
+
+- food_id: 249
+  description: "Carne, bovina, moída, crua"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+# --- Pescados (Tilápia / Merluza) ---
+- food_id: 301
+  description: "Merluza, filé, assado"
+  unit: "filé"
+  unit_plural: "filés"
+  grams_per_unit: 100.0
+
+- food_id: 302
+  description: "Merluza, filé, cru"
+  unit: "filé"
+  unit_plural: "filés"
+  grams_per_unit: 100.0
+
+- food_id: 317
+  description: "Salmão, sem pele, fresco, grelhado"
+  unit: "filé"
+  unit_plural: "filés"
+  grams_per_unit: 120.0
+
+- food_id: 277
+  description: "Atum, conserva em óleo"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 20.0
+
+# --- Cereais e Tubérculos ---
+- food_id: 3
+  description: "Arroz, tipo 1, cozido"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+- food_id: 1
+  description: "Arroz, integral, cozido"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+- food_id: 91
+  description: "Batata, inglesa, cozida"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 140.0
+
+- food_id: 88
+  description: "Batata, doce, cozida"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 50.0
+
+- food_id: 129
+  description: "Mandioca, cozida"
+  unit: "pedaço médio"
+  unit_plural: "pedaços médios"
+  grams_per_unit: 100.0
+
+- food_id: 86
+  description: "Batata, baroa, cozida"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 100.0
+
+# --- Pães e Derivados ---
+- food_id: 53
+  description: "Pão, trigo, francês"
+  unit: "unidade"
+  unit_plural: "unidades"
+  grams_per_unit: 50.0
+
+- food_id: 52
+  description: "Pão, trigo, forma, integral"
+  unit: "fatia"
+  unit_plural: "fatias"
+  grams_per_unit: 25.0
+
+- food_id: 48
+  description: "Pão, aveia, forma"
+  unit: "fatia"
+  unit_plural: "fatias"
+  grams_per_unit: 25.0
+
+- food_id: 551
+  description: "Tapioca, com manteiga"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 20.0
+
+- food_id: 124
+  description: "Fécula, de mandioca"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 20.0
+
+# --- Verduras e Legumes ---
+- food_id: 100
+  description: "Brócolis, cozido"
+  unit: "ramo"
+  unit_plural: "ramos"
+  grams_per_unit: 30.0
+
+- food_id: 101
+  description: "Brócolis, cru"
+  unit: "ramo"
+  unit_plural: "ramos"
+  grams_per_unit: 30.0
+
+- food_id: 70
+  description: "Abobrinha, italiana, cozida"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+- food_id: 72
+  description: "Abobrinha, italiana, refogada"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+- food_id: 162
+  description: "Vagem, crua"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 20.0
+
+- food_id: 77
+  description: "Alface, americana, crua"
+  unit: "folha"
+  unit_plural: "folhas"
+  grams_per_unit: 15.0
+
+- food_id: 78
+  description: "Alface, crespa, crua"
+  unit: "folha"
+  unit_plural: "folhas"
+  grams_per_unit: 10.0
+
+- food_id: 161
+  description: "Tomate, salada"
+  unit: "fatia"
+  unit_plural: "fatias"
+  grams_per_unit: 20.0
+
+# --- Frutas ---
+- food_id: 225
+  description: "Mamão, Formosa, cru"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 160.0
+
+- food_id: 226
+  description: "Mamão, Papaia, cru"
+  unit: "meia unidade"
+  unit_plural: "meias unidades"
+  grams_per_unit: 140.0
+
+- food_id: 236
+  description: "Melão, cru"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 100.0
+
+- food_id: 239
+  description: "Morango, cru"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 15.0
+
+- food_id: 221
+  description: "Maçã, Argentina, com casca, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 130.0
+
+- food_id: 222
+  description: "Maçã, Fuji, com casca, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 130.0
+
+- food_id: 179
+  description: "Banana, nanica, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 70.0
+
+- food_id: 182
+  description: "Banana, prata, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 65.0
+
+- food_id: 175
+  description: "Banana, da terra, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 100.0
+
+# --- Gorduras e Óleos ---
+- food_id: 260
+  description: "Azeite, de oliva, extra virgem"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 10.0
+
+- food_id: 259
+  description: "Azeite, de dendê"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 10.0
+
+# --- Laticínios e Suplementos ---
+- food_id: 456
+  description: "Leite, de vaca, desnatado, pó"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 10.0
+
+- food_id: 457
+  description: "Leite, de vaca, integral, pó"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 10.0

@@ -49,6 +49,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "get_food",
     "calculate_macros",
     "calculate_meal_macros",
+    "fit_meals",
 })
 CUSTOM_TOOL_NAMES = frozenset({
     "add_custom_food",
@@ -148,6 +149,79 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["items"]
+            }
+        ),
+        Tool(
+            name="fit_meals",
+            description=(
+                "Ajusta e calcula deterministicamente as porções (em gramas) e medidas caseiras de cada alimento "
+                "para uma ou várias refeições/opções em lote, atingindo as metas de calorias e macronutrientes. "
+                "O agente de IA deve apenas escolher os alimentos e seus papéis (roles), chamar fit_meals UMA única vez "
+                "com todas as opções desejadas no lote, e usar diretamente os totais e porções devolvidos, SEM recalcular "
+                "ou fazer laços iterativos de ajuste."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "meals": {
+                        "type": "array",
+                        "description": "Lista de opções de refeições a serem ajustadas de forma independente (1 a 30 opções).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Identificador único da refeição ou opção (ex.: 'cafe_opcao_1', 'almoco_opcao_1')"
+                                },
+                                "target": {
+                                    "type": "object",
+                                    "description": "Meta nutricional da refeição",
+                                    "properties": {
+                                        "kcal": {"type": "number", "description": "Calorias alvo (kcal)", "minimum": 0},
+                                        "protein_g": {"type": "number", "description": "Proteína alvo em gramas", "minimum": 0},
+                                        "carb_g": {"type": "number", "description": "Carboidrato alvo em gramas", "minimum": 0},
+                                        "fat_g": {"type": "number", "description": "Gordura alvo em gramas", "minimum": 0}
+                                    },
+                                    "required": ["kcal", "protein_g", "carb_g", "fat_g"]
+                                },
+                                "tolerance": {
+                                    "type": "object",
+                                    "description": "Tolerância permitida em relação à meta (opcional, padrão: kcal ±10%, proteína ±5g, carboidrato ±8g, gordura ±4g)",
+                                    "properties": {
+                                        "kcal_pct": {"type": "number", "description": "Tolerância de calorias em % (padrão 10)", "default": 10},
+                                        "protein_g": {"type": "number", "description": "Tolerância de proteína em g (padrão 5)", "default": 5},
+                                        "carb_g": {"type": "number", "description": "Tolerância de carboidrato em g (padrão 8)", "default": 8},
+                                        "fat_g": {"type": "number", "description": "Tolerância de gordura em g (padrão 4)", "default": 4}
+                                    }
+                                },
+                                "items": {
+                                    "type": "array",
+                                    "description": "Alimentos que compõem a refeição",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "food": {
+                                                "description": "ID numérico ou nome do alimento na TACO",
+                                                "oneOf": [{"type": "string"}, {"type": "integer"}]
+                                            },
+                                            "role": {
+                                                "type": "string",
+                                                "description": "Papel nutricional: protein, carb, veg, fruit, fat, free (à vontade)",
+                                                "enum": ["protein", "carb", "veg", "fruit", "fat", "free"]
+                                            },
+                                            "min_g": {"type": "number", "description": "Quantidade mínima em gramas (opcional)"},
+                                            "max_g": {"type": "number", "description": "Quantidade máxima em gramas (opcional)"},
+                                            "step_g": {"type": "number", "description": "Passo de ajuste em gramas (opcional)"}
+                                        },
+                                        "required": ["food", "role"]
+                                    }
+                                }
+                            },
+                            "required": ["id", "target", "items"]
+                        }
+                    }
+                },
+                "required": ["meals"]
             }
         ),
         Tool(
@@ -386,6 +460,14 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         raw_items = arguments.get("items", [])
         items = [MealItemInput(food_id=item["food_id"], grams=item["grams"]) for item in raw_items]
         result = db.calculate_meal_macros(items)
+        return [TextContent(
+            type="text",
+            text=result.model_dump_json(indent=2)
+        )]
+    
+    elif name == "fit_meals":
+        from .fit_meals import fit_meals as run_fit_meals
+        result = run_fit_meals(db, arguments)
         return [TextContent(
             type="text",
             text=result.model_dump_json(indent=2)

@@ -75,5 +75,66 @@ def test_http_mode_only_lists_read_only_tools():
         "get_food",
         "calculate_macros",
         "calculate_meal_macros",
+        "fit_meals",
     }
+
+
+def test_mcp_call_fit_meals_via_http(client: TestClient):
+    # Call tools/call for fit_meals
+    response = client.post(
+        "/mcp",
+        headers=mcp_headers(),
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "fit_meals",
+                "arguments": {
+                    "meals": [
+                        {
+                            "id": "teste_http",
+                            "target": {
+                                "kcal": 234.5,
+                                "protein_g": 33.5,
+                                "carb_g": 14.7,
+                                "fat_g": 4.6,
+                            },
+                            "items": [
+                                {
+                                    "food": 486,
+                                    "role": "protein",
+                                    "min_g": 30,
+                                    "max_g": 300,
+                                    "step_g": 10,
+                                },
+                                {
+                                    "food": 239,
+                                    "role": "fruit",
+                                    "min_g": 30,
+                                    "max_g": 200,
+                                    "step_g": 10,
+                                },
+                                {
+                                    "food": 78,
+                                    "role": "free",
+                                },
+                            ],
+                        }
+                    ]
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert "result" in res_data
+    assert "content" in res_data["result"]
+    import json
+    content_text = json.loads(res_data["result"]["content"][0]["text"])
+    assert "results" in content_text
+    assert len(content_text["results"]) == 1
+    assert content_text["results"][0]["id"] == "teste_http"
+    assert content_text["results"][0]["feasible"] is True
 
