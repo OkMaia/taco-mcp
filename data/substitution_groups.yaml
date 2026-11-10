@@ -1,0 +1,387 @@
+# Curated substitution groups for TACO MCP fit_meals
+# Each entry defines a food's equivalence group, dietary tags, and portion constraints
+
+# ==================== CARB CAFE ====================
+- food_id: 52
+  name: "Pão, trigo, forma, integral"
+  group: "carb_cafe"
+  tags: ["gluten"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 53
+  name: "Pão, trigo, francês"
+  group: "carb_cafe"
+  tags: ["gluten"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 551
+  name: "Tapioca, com manteiga"
+  group: "carb_cafe"
+  tags: ["lactose"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 100101
+  name: "Tapioca, goma hidratada"
+  group: "carb_cafe"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 533
+  name: "Cuscuz, de milho, cozido com sal"
+  group: "carb_cafe"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 7
+  name: "Aveia, flocos, crua"
+  group: "carb_cafe"
+  tags: ["gluten"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 88
+  name: "Batata, doce, cozida"
+  group: "carb_cafe"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 129
+  name: "Mandioca, cozida"
+  group: "carb_cafe"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+# ==================== CARB PRATO ====================
+- food_id: 3
+  name: "Arroz, tipo 1, cozido"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 1
+  name: "Arroz, integral, cozido"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 91
+  name: "Batata, inglesa, cozida"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 88
+  name: "Batata, doce, cozida"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 129
+  name: "Mandioca, cozida"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 533
+  name: "Cuscuz, de milho, cozido com sal"
+  group: "carb_prato"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 100102
+  name: "Macarrão, trigo, cozido"
+  group: "carb_prato"
+  tags: ["gluten"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+# ==================== LEGUMINOSA ====================
+- food_id: 561
+  name: "Feijão, carioca, cozido"
+  group: "leguminosa"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 567
+  name: "Feijão, preto, cozido"
+  group: "leguminosa"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 577
+  name: "Lentilha, cozida"
+  group: "leguminosa"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 100103
+  name: "Grão-de-bico, cozido"
+  group: "leguminosa"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+# ==================== PROT CAFE ====================
+- food_id: 488
+  name: "Ovo, de galinha, inteiro, cozido/10minutos"
+  group: "prot_cafe"
+  tags: ["ovo"]
+  common: true
+  step_g: 50.0
+  min_g: 50.0
+  max_g: 100.0
+
+- food_id: 461
+  name: "Queijo, minas, frescal"
+  group: "prot_cafe"
+  tags: ["lactose"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 448
+  name: "Iogurte, natural"
+  group: "prot_cafe"
+  tags: ["lactose"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+  liquid: true
+
+- food_id: 469
+  name: "Queijo, ricota"
+  group: "prot_cafe"
+  tags: ["lactose"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+# ==================== PROT PRATO ====================
+- food_id: 410
+  name: "Frango, peito, sem pele, grelhado"
+  group: "prot_prato"
+  tags: ["carne"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 408
+  name: "Frango, peito, sem pele, cozido"
+  group: "prot_prato"
+  tags: ["carne"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 377
+  name: "Carne, bovina, patinho, sem gordura, grelhado"
+  group: "prot_prato"
+  tags: ["carne"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 301
+  name: "Merluza, filé, assado"
+  group: "prot_prato"
+  tags: ["peixe"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 318
+  name: "Sardinha, assada"
+  group: "prot_prato"
+  tags: ["peixe"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 277
+  name: "Atum, conserva em óleo"
+  group: "prot_prato"
+  tags: ["peixe"]
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 488
+  name: "Ovo, de galinha, inteiro, cozido/10minutos"
+  group: "prot_prato"
+  tags: ["ovo"]
+  common: true
+  step_g: 50.0
+  min_g: 50.0
+  max_g: 100.0
+
+# ==================== FRUTA ====================
+- food_id: 182
+  name: "Banana, prata, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 179
+  name: "Banana, nanica, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 226
+  name: "Mamão, Papaia, cru"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 225
+  name: "Mamão, Formosa, cru"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 236
+  name: "Melão, cru"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 222
+  name: "Maçã, Fuji, com casca, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 214
+  name: "Laranja, pêra, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 235
+  name: "Melancia, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 239
+  name: "Morango, cru"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 164
+  name: "Abacaxi, cru"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 251
+  name: "Tangerina, Poncã, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0
+
+- food_id: 243
+  name: "Pêra, Williams, crua"
+  group: "fruta"
+  tags: []
+  common: true
+  step_g: 5.0
+  min_g: 10.0
+  max_g: 300.0

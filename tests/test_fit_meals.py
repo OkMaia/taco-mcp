@@ -873,3 +873,336 @@ def test_exact_match_false_and_true_cases():
     assert it_arroz.exact_match is True
     assert it_arroz.match_note is None
     assert it_arroz.alternatives is None
+
+
+# ==================== SUBSTITUTIONS AND IMPROVEMENTS TESTS ====================
+
+
+def test_substitutions_disabled_by_default():
+    """fit_meals without substitutions parameter returns substitutes=None (fully backward compatible)."""
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "cafe_sem_sub",
+                "target": {"kcal": 235, "protein_g": 20, "carb_g": 22, "fat_g": 8},
+                "items": [
+                    {"food": "ovo de galinha inteiro cozido", "role": "protein", "max_g": 100},
+                    {"food": "pão de forma", "role": "carb"},
+                ],
+            }
+        ]
+    }
+    out = fit_meals(db, args)
+    assert len(out.results) == 1
+    res = out.results[0]
+    assert res.feasible is True
+    for item in res.items:
+        assert item.substitutes is None
+
+
+def test_substitutions_carb_cafe_pao_forma():
+    """
+    Pão de forma 35g returns pão francês (30g, 1/2 unidade), tapioca, cuscuz with household measures
+    and kcal difference below 15%.
+    """
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "meals": [
+            {
+                "id": "cafe_opcao_1",
+                "target": {"kcal": 235, "protein_g": 20, "carb_g": 22, "fat_g": 8},
+                "items": [
+                    {"food": "ovo de galinha inteiro cozido", "role": "protein", "max_g": 100},
+                    {"food": "pão de forma", "role": "carb"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    assert len(out.results) == 1
+    res = out.results[0]
+    assert res.feasible is True
+
+    carb_item = next(it for it in res.items if it.role == "carb")
+    assert carb_item.grams == 35
+    assert carb_item.substitutes is not None
+    assert len(carb_item.substitutes) >= 2
+
+    sub_names = [s.name for s in carb_item.substitutes]
+    # Pão francês, tapioca, cuscuz must be present
+    assert any("francês" in name.lower() for name in sub_names)
+    assert any("tapioca" in name.lower() for name in sub_names)
+    assert any("cuscuz" in name.lower() for name in sub_names)
+
+    # Check pão francês details: 30g, 1/2 unidade
+    pao_frances_sub = next(s for s in carb_item.substitutes if "francês" in s.name.lower())
+    assert pao_frances_sub.grams == 30
+    assert pao_frances_sub.household is not None
+    assert pao_frances_sub.household.quantity == "1/2"
+    assert pao_frances_sub.household.unit == "unidade"
+    assert pao_frances_sub.macro_matched == "carb_g"
+    assert pao_frances_sub.exact_match is True
+
+    # Check that all substitutes have kcal difference below 15% of original
+    orig_kcal = 35.0 * (carb_item.food_id == 52 and 2.53 or 2.53)
+    for sub in carb_item.substitutes:
+        assert sub.household is not None
+        assert sub.grams >= 10
+        assert sub.grams <= 300
+        diff_pct = sub.kcal_diff / orig_kcal
+        assert diff_pct <= 0.15 + 1e-3
+
+
+def test_substitutions_exclude_lactose():
+    """With exclude_tags=['lactose'], lactose foods (queijo, iogurte, ricota, tapioca com manteiga) never appear."""
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "exclude_tags": ["lactose"],
+        "meals": [
+            {
+                "id": "cafe_lactose_free",
+                "target": {"kcal": 235, "protein_g": 20, "carb_g": 22, "fat_g": 8},
+                "items": [
+                    {"food": "ovo de galinha inteiro cozido", "role": "protein", "max_g": 100},
+                    {"food": "pão de forma", "role": "carb"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    carb_item = next(it for it in res.items if it.role == "carb")
+    carb_sub_names = [s.name.lower() for s in (carb_item.substitutes or [])]
+    assert not any("tapioca, com manteiga" in name for name in carb_sub_names)
+
+    prot_item = next(it for it in res.items if it.role == "protein")
+    prot_sub_names = [s.name.lower() for s in (prot_item.substitutes or [])]
+    assert not any("queijo" in name for name in prot_sub_names)
+    assert not any("iogurte" in name for name in prot_sub_names)
+    assert not any("ricota" in name for name in prot_sub_names)
+
+
+def test_substitutions_exclude_gluten():
+    """With exclude_tags=['gluten'], gluten foods (pão francês, pão de forma, aveia) never appear."""
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "exclude_tags": ["gluten"],
+        "meals": [
+            {
+                "id": "cafe_gluten_free",
+                "target": {"kcal": 235, "protein_g": 20, "carb_g": 22, "fat_g": 8},
+                "items": [
+                    {"food": "ovo de galinha inteiro cozido", "role": "protein", "max_g": 100},
+                    {"food": "batata doce cozida", "role": "carb"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    carb_item = next(it for it in res.items if it.role == "carb")
+    carb_sub_names = [s.name.lower() for s in (carb_item.substitutes or [])]
+    assert not any("pão" in name or "pao" in name for name in carb_sub_names)
+    assert not any("aveia" in name for name in carb_sub_names)
+
+
+def test_substitutions_fruta():
+    """Fruit substitutions match by carb_g and return valid household measures with diff <= 15%."""
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "meals": [
+            {
+                "id": "lanche_fruta",
+                "target": {"kcal": 150, "protein_g": 10, "carb_g": 25, "fat_g": 2},
+                "items": [
+                    {"food": "banana prata", "role": "fruit", "min_g": 65, "max_g": 65},
+                    {"food": "ovo cozido", "role": "protein"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    fruit_item = next(it for it in res.items if it.role == "fruit")
+    assert fruit_item.substitutes is not None
+    assert len(fruit_item.substitutes) >= 2
+    for sub in fruit_item.substitutes:
+        assert sub.macro_matched == "carb_g"
+        assert sub.exact_match is True
+        assert sub.household is not None
+
+
+def test_substitutions_prot_prato():
+    """prot_prato returns 2 to 4 meat/fish/egg equivalents ordered by minimal kcal difference."""
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "meals": [
+            {
+                "id": "almoco_prato",
+                "target": {"kcal": 400, "protein_g": 35, "carb_g": 45, "fat_g": 5},
+                "items": [
+                    {"food": "peito de frango grelhado", "role": "protein", "min_g": 100, "max_g": 100},
+                    {"food": "arroz cozido", "role": "carb"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    prot_item = next(it for it in res.items if it.role == "protein")
+    assert prot_item.substitutes is not None
+    assert len(prot_item.substitutes) >= 2
+    # Ensure ordered by ascending kcal_diff
+    diffs = [s.kcal_diff for s in prot_item.substitutes]
+    assert diffs == sorted(diffs)
+    # Never substitutes with itself
+    assert not any(s.food_id == prot_item.food_id for s in prot_item.substitutes)
+
+
+def test_substitutions_egg_whole_units_max_2():
+    """Egg as a substitute must only return whole units (50g or 100g) and never more than 2 eggs."""
+    db = get_db()
+    # When substituting queijo minas (60g = ~10.4g protein), 2 eggs = 100g
+    args = {
+        "substitutions": True,
+        "meals": [
+            {
+                "id": "cafe_egg_sub",
+                "target": {"kcal": 250, "protein_g": 15, "carb_g": 20, "fat_g": 12},
+                "items": [
+                    {"food": "queijo minas frescal", "role": "protein", "min_g": 60, "max_g": 60},
+                    {"food": "pão de forma", "role": "carb"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    prot_item = next(it for it in res.items if it.role == "protein")
+    egg_sub = next((s for s in (prot_item.substitutes or []) if s.food_id == 488), None)
+    if egg_sub is not None:
+        assert egg_sub.grams in (50, 100)
+        assert egg_sub.household is not None
+        assert egg_sub.household.quantity in (1, 2)
+
+
+def test_substitutions_free_veg_fat_no_substitutes():
+    """Item free, veg, and fat do not return substitutes."""
+    db = get_db()
+    args = {
+        "substitutions": True,
+        "meals": [
+            {
+                "id": "almoco_completo",
+                "target": {"kcal": 400, "protein_g": 30, "carb_g": 40, "fat_g": 10},
+                "items": [
+                    {"food": "peito de frango grelhado", "role": "protein", "min_g": 100, "max_g": 100},
+                    {"food": "arroz cozido", "role": "carb"},
+                    {"food": "brócolis cozido", "role": "veg", "min_g": 50, "max_g": 50},
+                    {"food": "azeite de oliva", "role": "fat", "min_g": 5, "max_g": 5},
+                    {"food": "salada de folhas", "role": "free"},
+                ],
+            }
+        ],
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    for it in res.items:
+        if it.role in ("free", "veg", "fat"):
+            assert it.substitutes is None, f"Item role '{it.role}' should not have substitutes"
+
+
+def test_search_tomate_prioritizes_cru():
+    """Correction 1: search_food('tomate') prioritizes 'Tomate, com semente, cru'."""
+    db = get_db()
+    res = db.search_food("tomate")
+    assert len(res.results) > 0
+    assert res.results[0].food_id == 157
+    assert "com semente, cru" in res.results[0].description.lower()
+
+
+def test_resolve_feijao_cozido():
+    """Correction 2: 'feijão cozido' maps to 'Feijão, carioca, cozido' (ID 561), not banana."""
+    db = get_db()
+    food_id, desc, macros, matched_from, _ = resolve_food(db, "feijão cozido")
+    assert food_id == 561
+    assert "feijão" in desc.lower() or "feijao" in desc.lower()
+    assert "carioca" in desc.lower()
+    assert "cozido" in desc.lower()
+    assert "banana" not in desc.lower()
+
+
+def test_egg_fat_tolerance():
+    """Correction 4: Meal with whole egg as protein accepts up to +6g fat deviation without failing."""
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "cafe_com_ovo",
+                # Target with low fat (6g) where 2 eggs (100g = ~9.5g fat) exceeds by +4.8g (within +6g)
+                "target": {"kcal": 240, "protein_g": 17, "carb_g": 18, "fat_g": 6},
+                "items": [
+                    {"food": "ovo de galinha inteiro cozido", "role": "protein", "min_g": 100, "max_g": 100},
+                    {"food": "pão de forma", "role": "carb"},
+                ],
+            }
+        ]
+    }
+    out = fit_meals(db, args)
+    res = out.results[0]
+    assert res.feasible is True
+    assert res.within_tolerance.fat is True
+
+
+def test_custom_food_with_tags():
+    """Correction 5: Allows registering custom foods with tags (e.g. ['lactose']) and retrieving them."""
+    db = get_db()
+    test_name = "Whey Test Suite Spec"
+    fid = db.add_custom_food(
+        name=test_name,
+        kcal_per_100g=400.0,
+        protein_g_per_100g=80.0,
+        fat_g_per_100g=3.0,
+        carbs_g_per_100g=5.0,
+        tags=["lactose"],
+    )
+    try:
+        food = db.get_custom_food(fid)
+        assert food is not None
+        assert food.description == test_name
+        assert food.tags == ["lactose"]
+    finally:
+        db.delete_custom_food(fid)
+
+
+def test_substitutions_batch_30_meals_performance():
+    """Criterion 6: 30 meals in batch with substitutions completes quickly with single response."""
+    db = get_db()
+    single_meal = {
+        "id": "m",
+        "target": {"kcal": 235, "protein_g": 20, "carb_g": 22, "fat_g": 8},
+        "items": [
+            {"food": "ovo de galinha inteiro cozido", "role": "protein", "max_g": 100},
+            {"food": "pão de forma", "role": "carb"},
+        ],
+    }
+    meals = [{**single_meal, "id": f"m_{i}"} for i in range(30)]
+    args = {
+        "substitutions": True,
+        "exclude_tags": ["lactose"],
+        "meals": meals,
+    }
+
+    start = time.perf_counter()
+    out = fit_meals(db, args)
+    elapsed = time.perf_counter() - start
+
+    assert len(out.results) == 30
+    assert elapsed < 5.0, f"30 meals with substitutions took {elapsed:.2f}s, expected < 5.0s"
+

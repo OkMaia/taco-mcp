@@ -125,6 +125,11 @@ def build_database():
     
     conn.close()
     print(f"Database created at {db_path}")
+
+    # Initialize custom foods and substitution groups tables
+    from taco_mcp.db import TacoDB
+    taco_db = TacoDB(db_path)
+    print("Initialized custom foods and substitution groups tables")
     
     return db_path
 

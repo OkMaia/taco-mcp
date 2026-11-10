@@ -25,6 +25,7 @@ from .schemas import (
     FitWithinTolerance,
     HouseholdMeasure,
     MacroPer100g,
+    SubstituteItem,
 )
 
 VALID_ROLES = frozenset({"protein", "carb", "veg", "fruit", "fat", "free"})
@@ -125,12 +126,73 @@ COMMON_MEAL_ALIASES = {
     "leite po desnatado": 456,
     "leite desnatado po": 456,
     "tapioca": 551,
+    "tapioca com manteiga": 551,
+    "tapioca sem manteiga": 100101,
+    "tapioca goma hidratada": 100101,
+    "goma de tapioca": 100101,
+    "cuscuz": 533,
+    "cuscuz de milho": 533,
+    "cuscuz cozido": 533,
+    "cuscuz de milho cozido": 533,
+    "aveia": 7,
+    "aveia flocos": 7,
+    "aveia em flocos": 7,
+    "feijao": 561,
+    "feijão": 561,
+    "feijao cozido": 561,
+    "feijão cozido": 561,
+    "feijao carioca": 561,
+    "feijão carioca": 561,
+    "feijao carioca cozido": 561,
+    "feijão carioca cozido": 561,
+    "feijao preto": 567,
+    "feijão preto": 567,
+    "feijao preto cozido": 567,
+    "feijão preto cozido": 567,
+    "lentilha": 577,
+    "lentilha cozida": 577,
+    "grao de bico": 575,
+    "grão de bico": 575,
+    "grao de bico cozido": 100103,
+    "grão de bico cozido": 100103,
+    "macarrao": 100102,
+    "macarrão": 100102,
+    "macarrao cozido": 100102,
+    "macarrão cozido": 100102,
+    "queijo minas": 461,
+    "queijo minas frescal": 461,
+    "iogurte natural": 448,
+    "iogurte": 448,
+    "ricota": 469,
+    "queijo ricota": 469,
+    "sardinha": 318,
+    "sardinha assada": 318,
+    "atum": 277,
+    "atum em conserva": 277,
+    "laranja": 214,
+    "laranja pera": 214,
+    "laranja pêra": 214,
+    "melancia": 235,
+    "abacaxi": 164,
+    "tangerina": 251,
+    "tangerina ponca": 251,
+    "tangerina poncã": 251,
+    "pera": 243,
+    "pêra": 243,
+    "tomate": 157,
+    "tomates": 157,
+    "tomate cru": 157,
+    "tomate com semente": 157,
+    "tomate com sementes": 157,
+    "tomate com semente cru": 157,
     "pao": 53,
     "pão": 53,
     "pao frances": 53,
     "pão francês": 53,
     "pao integral": 52,
     "pão integral": 52,
+    "pao de forma": 52,
+    "pão de forma": 52,
 }
 
 _HOUSEHOLD_MEASURES_CACHE: Optional[dict[int, dict[str, Any]]] = None
@@ -185,6 +247,16 @@ def pluralize_unit(unit: str) -> str:
         "gema": "gemas",
         "porção": "porções",
         "porcao": "porções",
+        "concha média": "conchas médias",
+        "concha media": "conchas médias",
+        "concha": "conchas",
+        "pegador": "pegadores",
+        "pote": "potes",
+        "pote médio": "potes médios",
+        "pote medio": "potes médios",
+        "xícara": "xícaras",
+        "xicara": "xícaras",
+        "fatia": "fatias",
     }
     unit_lower = unit.lower().strip()
     if unit_lower in comps:
@@ -267,6 +339,250 @@ def calculate_household_measure(
         unit = unit_plural
 
     return HouseholdMeasure(quantity=quantity, unit=unit, note=note)
+
+
+_SUBSTITUTION_GROUPS_CACHE: Optional[dict[str, list[dict[str, Any]]]] = None
+
+CAFE_KEYWORDS = ("cafe", "café", "lanche", "breakfast", "snack", "desjejum", "manha", "manhã", "tarde")
+PRATO_KEYWORDS = ("almoco", "almoço", "jantar", "prato", "lunch", "dinner", "refeicao", "refeição", "principal")
+
+CAFE_EXCLUSIVE_FOODS = {52, 53, 7, 461, 448, 469, 551, 100101}
+PRATO_EXCLUSIVE_FOODS = {3, 1, 91, 100102, 410, 408, 377, 301, 318, 277, 561, 567, 577, 100103}
+
+
+def load_substitution_groups(db: Optional[TacoDB] = None) -> dict[str, list[dict[str, Any]]]:
+    """Load substitution groups from database or YAML file."""
+    global _SUBSTITUTION_GROUPS_CACHE
+    if _SUBSTITUTION_GROUPS_CACHE is not None:
+        return _SUBSTITUTION_GROUPS_CACHE
+
+    if db is not None:
+        try:
+            db_groups = db.get_substitution_groups()
+            if db_groups:
+                _SUBSTITUTION_GROUPS_CACHE = db_groups
+                return _SUBSTITUTION_GROUPS_CACHE
+        except Exception:
+            pass
+
+    candidates = [
+        Path(__file__).parent / "data" / "substitution_groups.yaml",
+        Path(__file__).parent.parent.parent / "data" / "substitution_groups.yaml",
+        Path.cwd() / "data" / "substitution_groups.yaml",
+    ]
+    for p in candidates:
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                raw_data = yaml.safe_load(f) or []
+                groups: dict[str, list[dict[str, Any]]] = {}
+                for item in raw_data:
+                    g = item.get("group")
+                    if not g:
+                        continue
+                    if g not in groups:
+                        groups[g] = []
+                    groups[g].append(item)
+                _SUBSTITUTION_GROUPS_CACHE = groups
+                return _SUBSTITUTION_GROUPS_CACHE
+
+    _SUBSTITUTION_GROUPS_CACHE = {}
+    return _SUBSTITUTION_GROUPS_CACHE
+
+
+def determine_food_group(
+    food_id: int,
+    role: str,
+    meal_id: str = "",
+    meal_food_ids: Optional[set[int]] = None,
+    explicit_group: Optional[str] = None,
+    groups_data: Optional[dict[str, list[dict[str, Any]]]] = None,
+) -> Optional[str]:
+    """
+    Determine which substitution group a food item belongs to.
+    Handles disambiguation between cafe and prato groups based on meal context.
+    """
+    if groups_data is None:
+        groups_data = load_substitution_groups()
+
+    if explicit_group and explicit_group in groups_data:
+        return explicit_group
+
+    matching_groups: list[str] = []
+    for g_name, items in groups_data.items():
+        if any(item.get("food_id") == food_id for item in items):
+            matching_groups.append(g_name)
+
+    if not matching_groups:
+        return None
+
+    if len(matching_groups) == 1:
+        return matching_groups[0]
+
+    if role == "fruit":
+        if "fruta" in matching_groups:
+            return "fruta"
+
+    role_group_prefix = "carb" if role == "carb" else ("prot" if role == "protein" else None)
+    if role_group_prefix:
+        filtered = [g for g in matching_groups if g.startswith(role_group_prefix)]
+        if len(filtered) == 1:
+            return filtered[0]
+        if filtered:
+            matching_groups = filtered
+
+    meal_id_lower = meal_id.lower()
+    is_cafe_context = any(k in meal_id_lower for k in CAFE_KEYWORDS)
+    is_prato_context = any(k in meal_id_lower for k in PRATO_KEYWORDS)
+
+    other_ids = (meal_food_ids or set()) - {food_id}
+    has_cafe_foods = any(fid in CAFE_EXCLUSIVE_FOODS for fid in other_ids)
+    has_prato_foods = any(fid in PRATO_EXCLUSIVE_FOODS for fid in other_ids)
+
+    cafe_candidate = next((g for g in matching_groups if g.endswith("_cafe")), None)
+    prato_candidate = next((g for g in matching_groups if g.endswith("_prato")), None)
+
+    if cafe_candidate and prato_candidate:
+        if is_cafe_context or has_cafe_foods:
+            return cafe_candidate
+        if is_prato_context or has_prato_foods:
+            return prato_candidate
+        has_fruit = any(any(it.get("food_id") == fid for it in groups_data.get("fruta", [])) for fid in other_ids)
+        if has_fruit:
+            return cafe_candidate
+        if role == "protein":
+            return prato_candidate
+        return cafe_candidate
+
+    return matching_groups[0]
+
+
+def get_substitutes_for_item(
+    db: TacoDB,
+    orig_food_id: int,
+    orig_role: str,
+    orig_grams: float,
+    group_name: str,
+    substitution_groups_map: dict[str, list[dict[str, Any]]],
+    exclude_tags: set[str],
+    option_food_ids: set[int],
+    measures_map: dict[int, dict[str, Any]],
+) -> list[SubstituteItem]:
+    """
+    Deterministically calculate 2 to 4 equivalent substitutes for a food item.
+    - carb & fruit: match by carb_g
+    - protein: match by protein_g
+    - Discard if portion < 10g or > 300g (unless liquid)
+    - Egg: whole units (50g, 100g max)
+    - Discard if kcal difference > 15% of original
+    - Filter by exclude_tags
+    - Discard if already present in option
+    - Order by minimal kcal difference
+    """
+    if orig_role not in ("carb", "protein", "fruit") or orig_grams <= 0:
+        return []
+
+    if orig_role in ("carb", "fruit"):
+        macro_key = "carbs_g"
+        macro_matched = "carb_g"
+    else:
+        macro_key = "protein_g"
+        macro_matched = "protein_g"
+
+    orig_food = db.get_food(orig_food_id) or db.get_custom_food(orig_food_id)
+    if not orig_food or not orig_food.per_100g:
+        return []
+
+    orig_macro_val = getattr(orig_food.per_100g, macro_key, None) or 0.0
+    orig_kcal_100 = orig_food.per_100g.kcal or 0.0
+    if orig_macro_val <= 0 or orig_kcal_100 <= 0:
+        return []
+
+    orig_macro_total = orig_grams * (orig_macro_val / 100.0)
+    orig_kcal_total = orig_grams * (orig_kcal_100 / 100.0)
+
+    candidates = substitution_groups_map.get(group_name, [])
+    evaluated: list[dict[str, Any]] = []
+
+    for meta in candidates:
+        sub_food_id = meta["food_id"]
+
+        # Do not substitute with the food itself
+        if sub_food_id == orig_food_id:
+            continue
+
+        # Do not repeat food already present in the option
+        if sub_food_id in option_food_ids:
+            continue
+
+        # Check dietary restrictions (case-insensitive)
+        sub_tags = {str(t).lower().strip() for t in meta.get("tags", [])}
+        if any(tag in sub_tags for tag in exclude_tags):
+            continue
+
+        sub_food = db.get_food(sub_food_id) or db.get_custom_food(sub_food_id)
+        if not sub_food or not sub_food.per_100g:
+            continue
+
+        sub_macro_val = getattr(sub_food.per_100g, macro_key, None) or 0.0
+        sub_kcal_100 = sub_food.per_100g.kcal or 0.0
+        if sub_macro_val <= 0 or sub_kcal_100 <= 0:
+            continue
+
+        # Equivalence formula
+        raw_grams = (orig_macro_total / sub_macro_val) * 100.0
+
+        is_egg = (
+            sub_food_id in (488, 489, 490)
+            or ("ovo" in sub_food.description.lower() and "inteiro" in sub_food.description.lower())
+        )
+        if is_egg:
+            # Whole eggs only: 1 egg = 50g, max 2 eggs
+            num_eggs = round(raw_grams / 50.0)
+            if num_eggs < 1 or num_eggs > 2:
+                continue
+            sub_grams = float(num_eggs * 50.0)
+        else:
+            step_g = float(meta.get("step_g", 5.0))
+            sub_grams = round(raw_grams / step_g) * step_g
+
+            # Portion bounds: min 10g, max 300g (unless liquid)
+            is_liquid = bool(meta.get("liquid", False))
+            min_g = float(meta.get("min_g", 10.0))
+            max_g = float(meta.get("max_g", 300.0))
+            if sub_grams < min_g:
+                continue
+            if not is_liquid and sub_grams > max_g:
+                continue
+
+        sub_kcal_total = sub_grams * (sub_kcal_100 / 100.0)
+        kcal_diff = abs(sub_kcal_total - orig_kcal_total)
+
+        # Discard if kcal difference exceeds 15% of original
+        if orig_kcal_total > 0 and (kcal_diff / orig_kcal_total) > 0.15 + 1e-4:
+            continue
+
+        grams_disp: Union[int, float] = int(sub_grams) if sub_grams.is_integer() else round(sub_grams, 1)
+        kcal_disp: Union[int, float] = int(round(sub_kcal_total)) if abs(sub_kcal_total - round(sub_kcal_total)) < 1e-4 else round(sub_kcal_total, 1)
+        kcal_diff_disp: Union[int, float] = int(round(kcal_diff)) if abs(kcal_diff - round(kcal_diff)) < 1e-4 else round(kcal_diff, 1)
+
+        household = calculate_household_measure(sub_food_id, sub_grams, measures_map)
+
+        evaluated.append({
+            "substitute": SubstituteItem(
+                food_id=sub_food_id,
+                name=sub_food.description,
+                grams=grams_disp,
+                household=household,
+                kcal=kcal_disp,
+                kcal_diff=kcal_diff_disp,
+                macro_matched=macro_matched,
+                exact_match=True,
+            ),
+            "kcal_diff_raw": kcal_diff,
+        })
+
+    evaluated.sort(key=lambda x: x["kcal_diff_raw"])
+    return [x["substitute"] for x in evaluated[:4]]
 
 
 PREP_STATES = {
@@ -546,6 +862,7 @@ def solve_meal_option(
     db: TacoDB,
     option: FitMealOptionInput,
     measures_map: dict[int, dict[str, Any]],
+    sub_groups_map: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> FitMealOptionResult:
     """Solve portion fitting for a single meal option."""
     # 1. Validate Target
@@ -647,6 +964,7 @@ def solve_meal_option(
             "food_id": food_id,
             "name": desc,
             "role": item.role,
+            "item_index": idx,
             "matched_from": matched_from,
             "exact_match": exact_match,
             "match_note": match_note,
@@ -681,6 +999,16 @@ def solve_meal_option(
 
     n = len(active_foods)
 
+    # Check if the meal's protein source is whole egg (accepts up to ±6g fat tolerance)
+    has_whole_egg_protein = any(
+        f.get("role") == "protein" and (
+            f.get("food_id") in {488, 489, 490}
+            or ("ovo" in str(f.get("name", "")).lower() and "inteiro" in str(f.get("name", "")).lower())
+        )
+        for f in items_meta
+    )
+    fat_tol_g = max(tol.fat_g, 6.0) if has_whole_egg_protein else tol.fat_g
+
     # Weights: calories and protein higher; carbs and fat lower
     w_k = 2.0
     w_p = 2.0
@@ -690,7 +1018,7 @@ def solve_meal_option(
     delta_k = max(target.kcal * (tol.kcal_pct / 100.0), 1.0)
     delta_p = max(tol.protein_g, 0.5)
     delta_c = max(tol.carb_g, 0.5)
-    delta_f = max(tol.fat_g, 0.5)
+    delta_f = max(fat_tol_g, 0.5)
 
     def loss(g: list[float]) -> float:
         tot_k = sum(g[i] * active_foods[i]["kcal_per_g"] for i in range(n))
@@ -802,6 +1130,13 @@ def solve_meal_option(
         best_grams = current_g
 
     # Step 4: Map grams back to items and recalculate totals from TACO
+    if sub_groups_map is None:
+        sub_groups_map = load_substitution_groups(db)
+
+    option_substitutions = bool(option.substitutions) if option.substitutions is not None else False
+    option_exclude_tags = {str(t).lower().strip() for t in (option.exclude_tags or []) if isinstance(t, str)}
+    option_food_ids = {meta["food_id"] for meta in items_meta if meta.get("food_id") is not None}
+
     final_items: list[FitMealItemResult] = []
     removed_zero_items: list[str] = []
     tot_kcal = 0.0
@@ -823,6 +1158,7 @@ def solve_meal_option(
                     exact_match=meta.get("exact_match", True),
                     match_note=meta.get("match_note"),
                     alternatives=meta.get("alternatives"),
+                    substitutes=None,
                 )
             )
         else:
@@ -854,6 +1190,39 @@ def solve_meal_option(
 
             household = calculate_household_measure(meta["food_id"], g_val, measures_map)
 
+            item_input = option.items[meta["item_index"]] if "item_index" in meta and meta["item_index"] < len(option.items) else None
+            item_substitutions = (item_input.substitutions if item_input and item_input.substitutions is not None else option_substitutions)
+
+            item_exclude_tags = set(option_exclude_tags)
+            if item_input and item_input.exclude_tags:
+                item_exclude_tags.update(str(t).lower().strip() for t in item_input.exclude_tags if isinstance(t, str))
+
+            substitutes_list: Optional[list[SubstituteItem]] = None
+            if item_substitutions and meta["role"] in ("protein", "carb", "fruit") and g_val > 0:
+                explicit_group = getattr(item_input, "group", None) if item_input else None
+                group_name = determine_food_group(
+                    food_id=meta["food_id"],
+                    role=meta["role"],
+                    meal_id=option.id,
+                    meal_food_ids=option_food_ids,
+                    explicit_group=explicit_group,
+                    groups_data=sub_groups_map,
+                )
+                if group_name:
+                    substitutes_list = get_substitutes_for_item(
+                        db=db,
+                        orig_food_id=meta["food_id"],
+                        orig_role=meta["role"],
+                        orig_grams=g_val,
+                        group_name=group_name,
+                        substitution_groups_map=sub_groups_map,
+                        exclude_tags=item_exclude_tags,
+                        option_food_ids=option_food_ids,
+                        measures_map=measures_map,
+                    )
+                else:
+                    substitutes_list = []
+
             final_items.append(
                 FitMealItemResult(
                     food_id=meta["food_id"],
@@ -865,6 +1234,7 @@ def solve_meal_option(
                     exact_match=meta.get("exact_match", True),
                     match_note=meta.get("match_note"),
                     alternatives=meta.get("alternatives"),
+                    substitutes=substitutes_list,
                 )
             )
 
@@ -892,8 +1262,8 @@ def solve_meal_option(
     within_protein = abs(deviation.protein_g) <= tol.protein_g + 1e-4
 
     # Gordura: tolerância passa a valer só para CIMA (acima da meta + tolerância reprova).
-    # Gordura abaixo da meta é aceita e não reprova.
-    within_fat = deviation.fat_g <= tol.fat_g + 1e-4
+    # Gordura abaixo da meta é aceita e não reprova. Com ovo inteiro, aceita até ±6g.
+    within_fat = deviation.fat_g <= fat_tol_g + 1e-4
 
     # Carboidrato: reprova se passar da meta + tolerância.
     # Se ficar abaixo da meta, é aceitável quando calorias e proteína estiverem dentro.
@@ -936,9 +1306,9 @@ def solve_meal_option(
                 f"carboidrato ({totals.carb_g}g) com desvio de {deviation.carb_g:+.1f}g acima do teto de +{tol.carb_g}g"
             )
         # Só aparecer quando a gordura passar do teto
-        if deviation.fat_g > tol.fat_g + 1e-4:
+        if deviation.fat_g > fat_tol_g + 1e-4:
             reasons.append(
-                f"gordura ({totals.fat_g}g) com desvio de {deviation.fat_g:+.1f}g acima do teto de +{tol.fat_g}g"
+                f"gordura ({totals.fat_g}g) com desvio de {deviation.fat_g:+.1f}g acima do teto de +{fat_tol_g}g"
             )
 
         suggestions_list: list[str] = []
@@ -958,7 +1328,7 @@ def solve_meal_option(
                     "proteína acima da meta mesmo com alimentos no limite mínimo; reduza min_g ou troque por fonte de proteína mais magra"
                 )
 
-            if deviation.fat_g > tol.fat_g:
+            if deviation.fat_g > fat_tol_g:
                 fatty_foods = sorted(active_foods, key=lambda x: x["f_per_g"], reverse=True)
                 if fatty_foods and fatty_foods[0]["f_per_g"] > 0.05:
                     suggestions_list.append(
@@ -1014,6 +1384,11 @@ def fit_meals(db: TacoDB, arguments: dict[str, Any]) -> FitMealsOutput:
     and returns FitMealsOutput without raising unhandled exceptions.
     """
     measures_map = load_household_measures()
+    sub_groups_map = load_substitution_groups(db)
+
+    top_substitutions = bool(arguments.get("substitutions", False))
+    raw_exclude = arguments.get("exclude_tags") or []
+    top_exclude_tags = [str(t).lower().strip() for t in raw_exclude if isinstance(t, str)]
 
     raw_meals = arguments.get("meals")
     if not isinstance(raw_meals, list):
@@ -1064,8 +1439,19 @@ def fit_meals(db: TacoDB, arguments: dict[str, Any]) -> FitMealsOutput:
 
         meal_id = str(meal_raw.get("id", "opcao_sem_id"))
         try:
-            option_input = FitMealOptionInput(**meal_raw)
-            result = solve_meal_option(db, option_input, measures_map)
+            meal_dict = dict(meal_raw)
+            if "substitutions" not in meal_dict or meal_dict["substitutions"] is None:
+                meal_dict["substitutions"] = top_substitutions
+
+            combined_exclude = list(top_exclude_tags)
+            if "exclude_tags" in meal_dict and isinstance(meal_dict["exclude_tags"], list):
+                for t in meal_dict["exclude_tags"]:
+                    if isinstance(t, str) and t.lower().strip() not in combined_exclude:
+                        combined_exclude.append(t.lower().strip())
+            meal_dict["exclude_tags"] = combined_exclude
+
+            option_input = FitMealOptionInput(**meal_dict)
+            result = solve_meal_option(db, option_input, measures_map, sub_groups_map)
             results.append(result)
         except Exception as e:
             results.append(

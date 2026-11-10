@@ -289,3 +289,118 @@
   unit: "colher de sopa"
   unit_plural: "colheres de sopa"
   grams_per_unit: 10.0
+
+# --- Cuscuz, Aveia e Outros Cereais ---
+- food_id: 533
+  description: "Cuscuz, de milho, cozido com sal"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 80.0
+
+- food_id: 7
+  description: "Aveia, flocos, crua"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 15.0
+
+- food_id: 100101
+  description: "Tapioca, goma hidratada"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 20.0
+
+- food_id: 100102
+  description: "Macarrão, trigo, cozido"
+  unit: "pegador"
+  unit_plural: "pegadores"
+  grams_per_unit: 70.0
+
+# --- Leguminosas ---
+- food_id: 561
+  description: "Feijão, carioca, cozido"
+  unit: "concha média"
+  unit_plural: "conchas médias"
+  grams_per_unit: 130.0
+
+- food_id: 567
+  description: "Feijão, preto, cozido"
+  unit: "concha média"
+  unit_plural: "conchas médias"
+  grams_per_unit: 130.0
+
+- food_id: 577
+  description: "Lentilha, cozida"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+- food_id: 100103
+  description: "Grão-de-bico, cozido"
+  unit: "colher de sopa"
+  unit_plural: "colheres de sopa"
+  grams_per_unit: 25.0
+
+# --- Queijos e Iogurtes ---
+- food_id: 461
+  description: "Queijo, minas, frescal"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 30.0
+
+- food_id: 448
+  description: "Iogurte, natural"
+  unit: "pote"
+  unit_plural: "potes"
+  grams_per_unit: 170.0
+
+- food_id: 469
+  description: "Queijo, ricota"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 30.0
+
+# --- Pescados Adicionais ---
+- food_id: 318
+  description: "Sardinha, assada"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 50.0
+
+# --- Frutas Adicionais ---
+- food_id: 214
+  description: "Laranja, pêra, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 130.0
+
+- food_id: 235
+  description: "Melancia, crua"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 200.0
+
+- food_id: 164
+  description: "Abacaxi, cru"
+  unit: "fatia média"
+  unit_plural: "fatias médias"
+  grams_per_unit: 80.0
+
+- food_id: 251
+  description: "Tangerina, Poncã, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 100.0
+
+- food_id: 243
+  description: "Pêra, Williams, crua"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 130.0
+
+# --- Vegetais Adicionais ---
+- food_id: 157
+  description: "Tomate, com semente, cru"
+  unit: "unidade média"
+  unit_plural: "unidades médias"
+  grams_per_unit: 120.0
+

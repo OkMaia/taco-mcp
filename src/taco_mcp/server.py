@@ -166,6 +166,16 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "substitutions": {
+                        "type": "boolean",
+                        "description": "Quando true, calcula e devolve lista de alimentos substitutos equivalentes para cada item.",
+                        "default": False,
+                    },
+                    "exclude_tags": {
+                        "type": "array",
+                        "description": "Restrições alimentares a excluir dos substitutos (ex.: ['lactose', 'gluten', 'ovo', 'carne', 'peixe']).",
+                        "items": {"type": "string"},
+                    },
                     "meals": {
                         "type": "array",
                         "description": "Lista de opções de refeições a serem ajustadas de forma independente (1 a 30 opções).",
@@ -175,6 +185,15 @@ async def list_tools() -> list[Tool]:
                                 "id": {
                                     "type": "string",
                                     "description": "Identificador único da refeição ou opção (ex.: 'cafe_opcao_1', 'almoco_opcao_1')"
+                                },
+                                "substitutions": {
+                                    "type": "boolean",
+                                    "description": "Habilita ou desabilita substituições para esta opção específica."
+                                },
+                                "exclude_tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Restrições alimentares específicas para esta opção."
                                 },
                                 "target": {
                                     "type": "object",
@@ -214,7 +233,10 @@ async def list_tools() -> list[Tool]:
                                             },
                                             "min_g": {"type": "number", "description": "Quantidade mínima em gramas (opcional)"},
                                             "max_g": {"type": "number", "description": "Quantidade máxima em gramas (opcional)"},
-                                            "step_g": {"type": "number", "description": "Passo de ajuste em gramas (opcional)"}
+                                            "step_g": {"type": "number", "description": "Passo de ajuste em gramas (opcional)"},
+                                            "substitutions": {"type": "boolean", "description": "Habilita ou desabilita substituições para este item."},
+                                            "exclude_tags": {"type": "array", "items": {"type": "string"}, "description": "Restrições específicas para este item."},
+                                            "group": {"type": "string", "description": "Grupo de substituição forçado (ex.: 'carb_cafe', 'prot_prato')."}
                                         },
                                         "required": ["food", "role"]
                                     }
@@ -276,6 +298,12 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional notes (brand, recipe source, etc.)",
                         "default": ""
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags alimentares/nutricionais opcionais (ex.: ['lactose', 'gluten'])",
+                        "default": []
                     }
                 },
                 "required": ["name", "kcal_per_100g"]
@@ -477,6 +505,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         )]
     
     elif name == "add_custom_food":
+        tags = arguments.get("tags", [])
         raw_id = db.add_custom_food(
             name=arguments["name"],
             kcal_per_100g=arguments["kcal_per_100g"],
@@ -486,7 +515,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             fiber_g_per_100g=arguments.get("fiber_g_per_100g", 0),
             sodium_mg_per_100g=arguments.get("sodium_mg_per_100g", 0),
             category=arguments.get("category", "Custom"),
-            notes=arguments.get("notes", "")
+            notes=arguments.get("notes", ""),
+            tags=tags,
         )
         # Return ID with offset to distinguish from TACO foods
         food_id = raw_id + CUSTOM_FOOD_ID_OFFSET
@@ -496,6 +526,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 "success": True,
                 "food_id": food_id,
                 "name": arguments["name"],
+                "tags": tags,
                 "message": f"Custom food '{arguments['name']}' added with ID {food_id}"
             }, indent=2)
         )]

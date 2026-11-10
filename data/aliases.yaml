@@ -1,5 +1,5 @@
 # Aliases comuns para alimentos da TACO
-# formato: alias: food_id (database id, not source_id)
+# formato: alias: food_id (sequential SQLite id from foods table)
 
 # Arroz
 arroz: 3
@@ -9,7 +9,7 @@ arroz tipo 1: 3
 arroz integral: 1
 arroz tipo 2: 5
 
-# Frango - IDs based on database sequential id
+# Frango
 frango: 410
 peito de frango: 410
 frango grelhado: 410
@@ -19,70 +19,159 @@ frango coxa: 396
 sobrecoxa: 397
 
 # Ovos
-ovo: 199
-ovo cozido: 199
-ovo frito: 200
+ovo: 488
+ovo cozido: 488
+ovo de galinha: 488
+ovo de galinha cozido: 488
+ovo frito: 490
+clara: 486
+clara de ovo: 486
+clara cozida: 486
+claras: 486
 
 # Banana
-banana: 78
-banana prata: 78
-banana nanica: 79
-banana da terra: 80
+banana: 182
+banana prata: 182
+banana nanica: 179
+banana da terra: 175
 
 # Carne
-carne moída: 249
-patinho moído: 249
-contra filé: 247
-picanha: 246
-alcatra: 245
+carne moída: 377
+carne moida: 377
+patinho: 377
+patinho grelhado: 377
+patinho moído: 377
+patinho moido: 377
 
 # Pão
-pão francês: 51
-pão: 51
+pão: 53
+pao: 53
+pão francês: 53
+pao frances: 53
 pão de forma: 52
-pão integral: 53
+pao de forma: 52
+pão integral: 52
+pao integral: 52
 
-# Mandioca
-mandioca: 155
-aipim: 155
-macaxeira: 155
+# Mandioca / Macaxeira / Aipim
+mandioca: 129
+mandioca cozida: 129
+aipim: 129
+macaxeira: 129
 
 # Feijão
-feijão: 175
-feijão carioca: 175
-feijão preto: 177
-feijão cozido: 175
+feijão: 561
+feijao: 561
+feijão carioca: 561
+feijao carioca: 561
+feijão cozido: 561
+feijao cozido: 561
+feijão carioca cozido: 561
+feijao carioca cozido: 561
+feijão preto: 567
+feijao preto: 567
+feijão preto cozido: 567
+feijao preto cozido: 567
 
 # Batata
-batata: 156
-batata inglesa: 156
-batata cozida: 156
+batata: 91
+batata inglesa: 91
+batata cozida: 91
+batata inglesa cozida: 91
+batata doce: 88
+batata doce cozida: 88
 
-# Leite
-leite: 118
-leite integral: 118
-leite desnatado: 119
+# Tomate
+tomate: 157
+tomates: 157
+tomate cru: 157
+tomate com semente: 157
+tomate com sementes: 157
+tomate com semente cru: 157
 
-# Queijo
-queijo: 140
-queijo muçarela: 140
-queijo prato: 142
-queijo cottage: 138
+# Cuscuz
+cuscuz: 533
+cuscuz de milho: 533
+cuscuz de milho cozido: 533
+cuscuz cozido: 533
 
-# Macarrão
-macarrão: 67
-espaguete: 67
-macarrão cozido: 67
+# Tapioca
+tapioca: 551
+tapioca com manteiga: 551
 
-# Café
-café: 436
-café passado: 436
+# Aveia
+aveia: 7
+aveia em flocos: 7
+aveia flocos: 7
 
-# Açúcar
-acucar: 432
-acucar refinado: 432
+# Leguminosas
+lentilha: 577
+lentilha cozida: 577
+grao de bico: 575
+grão de bico: 575
+grao de bico cru: 575
+grão de bico cru: 575
 
-# Óleo
-óleo: 458
-óleo de soja: 458
-óleo vegetal: 458
+# Laticínios
+leite desnatado po: 456
+leite em po desnatado: 456
+queijo minas: 461
+queijo minas frescal: 461
+queijo mozarela: 463
+queijo muçarela: 463
+queijo ricota: 469
+ricota: 469
+iogurte: 448
+iogurte natural: 448
+
+# Peixes
+peixe: 301
+merluza: 301
+merluza assada: 301
+tilapia: 301
+tilápia: 301
+sardinha: 318
+sardinha assada: 318
+atum: 277
+atum em conserva: 277
+
+# Frutas
+mamao: 226
+mamão: 226
+mamao papaia: 226
+mamão papaia: 226
+mamao formosa: 225
+mamão formosa: 225
+melao: 236
+melão: 236
+morango: 239
+maca: 222
+maçã: 222
+laranja: 214
+laranja pera: 214
+laranja pêra: 214
+melancia: 235
+abacaxi: 164
+tangerina: 251
+pera: 243
+pêra: 243
+
+# Vegetais e Saladas
+salada: 78
+salada de folhas: 78
+salada de folhas verdes: 78
+salada folhas: 78
+salada verde: 78
+alface: 78
+brocolis: 100
+brócolis: 100
+brocolis cozido: 100
+abobrinha: 70
+abobrinha cozida: 70
+abobrinha italiana: 70
+vagem: 162
+
+# Gorduras
+azeite: 260
+azeite de oliva: 260
+azeite extra virgem: 260

@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 import yaml
 
 from .normalize import normalize_query, parse_br_number, round_macro
@@ -22,6 +22,10 @@ class TacoDB:
         self.db_path = db_path
         self._aliases: dict = {}
         self._load_aliases()
+        if self.db_path.exists():
+            self._init_custom_foods_table()
+            self.seed_default_custom_foods()
+            self._init_substitution_groups_table()
     
     def _load_aliases(self):
         """Load aliases from YAML file."""
@@ -118,7 +122,10 @@ class TacoDB:
         )
     
     def get_food(self, food_id: int) -> Optional[GetFoodOutput]:
-        """Get food by ID."""
+        """Get food by ID (official TACO food, or custom food)."""
+        if food_id >= 100000:
+            return self.get_custom_food(food_id)
+
         conn = self._get_connection()
         try:
             cursor = conn.execute(
@@ -130,7 +137,7 @@ class TacoDB:
             )
             row = cursor.fetchone()
             if not row:
-                return None
+                return self.get_custom_food(food_id)
             
             return GetFoodOutput(
                 food_id=row['id'],
@@ -237,9 +244,14 @@ class TacoDB:
                     fiber_g_per_100g REAL,
                     sodium_mg_per_100g REAL,
                     notes TEXT,
+                    tags TEXT DEFAULT '[]',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            try:
+                conn.execute("ALTER TABLE custom_foods ADD COLUMN tags TEXT DEFAULT '[]'")
+            except Exception:
+                pass
             conn.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS custom_foods_fts USING fts5(
                     name,
@@ -249,6 +261,142 @@ class TacoDB:
                 )
             """)
             conn.commit()
+        finally:
+            conn.close()
+
+    def seed_default_custom_foods(self):
+        """Seed default common Brazilian custom foods like Tapioca goma hidratada, Macarrão cozido, etc."""
+        self._init_custom_foods_table()
+        defaults = [
+            (
+                101,
+                "Tapioca, goma hidratada",
+                "Alimentos preparados",
+                242.0, 0.5, 0.1, 60.0, 0.8, 1.0,
+                "Goma hidratada sem manteiga (IBGE/TACO)",
+                "[]",
+            ),
+            (
+                102,
+                "Macarrão, trigo, cozido",
+                "Cereais e derivados",
+                131.0, 4.5, 0.6, 26.0, 1.4, 1.0,
+                "Macarrão de trigo cozido (IBGE/USDA)",
+                '["gluten"]',
+            ),
+            (
+                103,
+                "Grão-de-bico, cozido",
+                "Leguminosas e derivados",
+                164.0, 8.9, 2.6, 27.4, 7.6, 2.0,
+                "Grão-de-bico cozido (IBGE/USDA)",
+                "[]",
+            ),
+        ]
+        conn = self._get_connection()
+        try:
+            for item in defaults:
+                cursor = conn.execute("SELECT id FROM custom_foods WHERE id = ?", (item[0],))
+                if not cursor.fetchone():
+                    conn.execute("""
+                        INSERT OR REPLACE INTO custom_foods
+                        (id, name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                         carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, item)
+                    conn.execute("INSERT OR REPLACE INTO custom_foods_fts(rowid, name) VALUES (?, ?)", (item[0], item[1]))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _init_substitution_groups_table(self):
+        """Initialize substitution_groups table if not exists and populate from YAML."""
+        conn = self._get_connection()
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS substitution_groups (
+                    food_id INTEGER,
+                    name TEXT,
+                    group_name TEXT,
+                    tags TEXT,
+                    common BOOLEAN DEFAULT 1,
+                    step_g REAL DEFAULT 5.0,
+                    min_g REAL DEFAULT 10.0,
+                    max_g REAL DEFAULT 300.0,
+                    liquid BOOLEAN DEFAULT 0,
+                    PRIMARY KEY (food_id, group_name)
+                )
+            """)
+            conn.commit()
+
+            cursor = conn.execute("SELECT COUNT(*) FROM substitution_groups")
+            count = cursor.fetchone()[0]
+            if count == 0:
+                self._populate_substitution_groups_from_yaml(conn)
+        finally:
+            conn.close()
+
+    def _populate_substitution_groups_from_yaml(self, conn: sqlite3.Connection):
+        """Populate substitution_groups table from YAML."""
+        candidates = [
+            Path(__file__).parent / "data" / "substitution_groups.yaml",
+            Path(__file__).parent.parent.parent / "data" / "substitution_groups.yaml",
+            Path.cwd() / "data" / "substitution_groups.yaml",
+        ]
+        data = []
+        for p in candidates:
+            if p.exists():
+                with open(p, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or []
+                break
+
+        for item in data:
+            food_id = item.get("food_id")
+            name = item.get("name", "")
+            group_name = item.get("group", "")
+            tags_json = json.dumps([t.lower().strip() for t in item.get("tags", [])])
+            common = 1 if item.get("common", True) else 0
+            step_g = float(item.get("step_g", 5.0))
+            min_g = float(item.get("min_g", 10.0))
+            max_g = float(item.get("max_g", 300.0))
+            liquid = 1 if item.get("liquid", False) else 0
+            conn.execute("""
+                INSERT OR REPLACE INTO substitution_groups
+                (food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (food_id, name, group_name, tags_json, common, step_g, min_g, max_g, liquid))
+        conn.commit()
+
+    def get_substitution_groups(self) -> dict[str, list[dict[str, Any]]]:
+        """Get substitution groups mapped by group name."""
+        self._init_substitution_groups_table()
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """SELECT food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid
+                   FROM substitution_groups ORDER BY common DESC, name ASC"""
+            )
+            groups: dict[str, list[dict[str, Any]]] = {}
+            for row in cursor.fetchall():
+                g_name = row["group_name"]
+                if g_name not in groups:
+                    groups[g_name] = []
+                try:
+                    tags = json.loads(row["tags"]) if row["tags"] else []
+                except Exception:
+                    tags = []
+                groups[g_name].append({
+                    "food_id": row["food_id"],
+                    "name": row["name"],
+                    "group": g_name,
+                    "tags": tags,
+                    "common": bool(row["common"]),
+                    "step_g": row["step_g"],
+                    "min_g": row["min_g"],
+                    "max_g": row["max_g"],
+                    "liquid": bool(row["liquid"]),
+                })
+            return groups
         finally:
             conn.close()
     
@@ -262,20 +410,29 @@ class TacoDB:
         fiber_g_per_100g: float = 0,
         sodium_mg_per_100g: float = 0,
         category: str = "Custom",
-        notes: str = ""
+        notes: str = "",
+        tags: Optional[Union[List[str], str]] = None
     ) -> int:
         """Add a custom food. Returns the new food ID."""
         self._init_custom_foods_table()
         
+        if tags is None:
+            tags_list = []
+        elif isinstance(tags, str):
+            tags_list = [tags.lower().strip()]
+        else:
+            tags_list = [t.lower().strip() for t in tags if isinstance(t, str)]
+        tags_json = json.dumps(tags_list)
+
         conn = self._get_connection()
         try:
             cursor = conn.execute("""
                 INSERT INTO custom_foods
                 (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                 carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                  carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes))
+                  carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags_json))
             
             food_id = cursor.lastrowid
             
@@ -299,13 +456,22 @@ class TacoDB:
             cursor = conn.execute(
                 """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
                           fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
-                          sodium_mg_per_100g, notes, created_at
+                          sodium_mg_per_100g, notes, tags, created_at
                    FROM custom_foods
                    ORDER BY created_at DESC
                    LIMIT ?""",
                 (limit,)
             )
-            return [dict(row) for row in cursor.fetchall()]
+            foods = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                raw_tags = d.get('tags')
+                try:
+                    d['tags'] = json.loads(raw_tags) if raw_tags else []
+                except Exception:
+                    d['tags'] = []
+                foods.append(d)
+            return foods
         finally:
             conn.close()
     
@@ -326,25 +492,34 @@ class TacoDB:
             conn.close()
     
     def get_custom_food(self, food_id: int) -> Optional[GetFoodOutput]:
-        """Get custom food by ID."""
+        """Get custom food by ID (accepts raw ID or offset ID)."""
         self._init_custom_foods_table()
         
+        lookup_id = food_id - 100000 if food_id >= 100000 else food_id
         conn = self._get_connection()
         try:
             cursor = conn.execute(
                 """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
-                          fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
+                          fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                          sodium_mg_per_100g, tags
                    FROM custom_foods WHERE id = ?""",
-                (food_id,)
+                (lookup_id,)
             )
             row = cursor.fetchone()
             if not row:
                 return None
             
+            raw_tags = row['tags'] if 'tags' in row.keys() and row['tags'] else '[]'
+            try:
+                parsed_tags = json.loads(raw_tags)
+            except Exception:
+                parsed_tags = []
+
             return GetFoodOutput(
-                food_id=row['id'],
+                food_id=row['id'] + (100000 if food_id >= 100000 else 0),
                 description=row['name'],
                 category=row['category'],
+                tags=parsed_tags,
                 per_100g=MacroPer100g(
                     kcal=row['kcal_per_100g'],
                     protein_g=row['protein_g_per_100g'],

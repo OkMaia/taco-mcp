@@ -48,6 +48,7 @@ class GetFoodOutput(BaseModel):
     description: str
     category: str
     per_100g: MacroPer100g
+    tags: Optional[List[str]] = None
 
 
 class CalculatedMacros(BaseModel):
@@ -137,6 +138,9 @@ class FitMealItemInput(BaseModel):
     min_g: Optional[float] = None
     max_g: Optional[float] = None
     step_g: Optional[float] = None
+    substitutions: Optional[bool] = None
+    exclude_tags: Optional[List[str]] = None
+    group: Optional[str] = None
 
 
 class FitMealOptionInput(BaseModel):
@@ -145,11 +149,15 @@ class FitMealOptionInput(BaseModel):
     target: FitTarget
     tolerance: Optional[FitTolerance] = None
     items: List[FitMealItemInput]
+    substitutions: Optional[bool] = None
+    exclude_tags: Optional[List[str]] = None
 
 
 class FitMealsInput(BaseModel):
     """Input for fit_meals tool."""
     meals: List[FitMealOptionInput]
+    substitutions: bool = False
+    exclude_tags: Optional[List[str]] = None
 
 
 class HouseholdMeasure(BaseModel):
@@ -157,6 +165,18 @@ class HouseholdMeasure(BaseModel):
     quantity: Union[int, float, str]
     unit: str
     note: Optional[str] = None
+
+
+class SubstituteItem(BaseModel):
+    """Substitute food item for equivalence."""
+    food_id: int
+    name: str
+    grams: Union[int, float]
+    household: Optional[HouseholdMeasure] = None
+    kcal: Union[int, float]
+    kcal_diff: Union[int, float]
+    macro_matched: str
+    exact_match: bool = True
 
 
 class FitMealItemResult(BaseModel):
@@ -170,6 +190,7 @@ class FitMealItemResult(BaseModel):
     exact_match: bool = True
     match_note: Optional[str] = None
     alternatives: Optional[List[str]] = None
+    substitutes: Optional[List[SubstituteItem]] = None
 
 
 class FitTotals(BaseModel):
