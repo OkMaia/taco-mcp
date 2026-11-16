@@ -362,13 +362,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     if name == "search_food":
         args = SearchFoodInput(**arguments)
         taco_results = db.search_food(args.query, args.limit)
-        custom_results = []
-        if not is_read_only_mode():
-            custom_results = db.search_custom_foods(
-                args.query,
-                args.limit,
-                id_offset=CUSTOM_FOOD_ID_OFFSET,
-            )
+        custom_results = db.search_custom_foods(
+            args.query,
+            args.limit,
+            id_offset=CUSTOM_FOOD_ID_OFFSET,
+        )
 
         # Combine results
         all_results = taco_results.results + custom_results
@@ -390,7 +388,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         food_id = args.food_id
         
         # Check if it's a custom food ID (>= offset)
-        if food_id >= CUSTOM_FOOD_ID_OFFSET and not is_read_only_mode():
+        if food_id >= CUSTOM_FOOD_ID_OFFSET:
             result = db.get_custom_food(food_id - CUSTOM_FOOD_ID_OFFSET)
             if result:
                 # Adjust ID in response
@@ -398,7 +396,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         else:
             # Try TACO first
             result = db.get_food(food_id)
-            if result is None and not is_read_only_mode():
+            if result is None:
                 # Check if there's a custom food with this ID (legacy)
                 result = db.get_custom_food(food_id)
         
@@ -417,7 +415,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         food_id = args.food_id
         
         # Check if it's a custom food
-        if food_id >= CUSTOM_FOOD_ID_OFFSET and not is_read_only_mode():
+        if food_id >= CUSTOM_FOOD_ID_OFFSET:
             custom_id = food_id - CUSTOM_FOOD_ID_OFFSET
             custom = db.get_custom_food(custom_id)
             if custom:
@@ -449,7 +447,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         else:
             # Try TACO
             result = db.calculate_macros(food_id, args.grams)
-            if result is None and not is_read_only_mode():
+            if result is None:
                 # Try custom food (legacy)
                 custom = db.get_custom_food(food_id)
                 if custom:

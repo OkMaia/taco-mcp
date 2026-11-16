@@ -1206,3 +1206,38 @@ def test_substitutions_batch_30_meals_performance():
     assert len(out.results) == 30
     assert elapsed < 5.0, f"30 meals with substitutions took {elapsed:.2f}s, expected < 5.0s"
 
+
+def test_fit_meals_with_custom_whey():
+    """Test fitting meal with ovo + pão de forma + whey (role protein, max_g 30)."""
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "cafe_com_whey",
+                "target": {
+                    "kcal": 320.0,
+                    "protein_g": 33.0,
+                    "carb_g": 28.0,
+                    "fat_g": 8.0,
+                },
+                "items": [
+                    {"food": "ovo", "role": "protein"},
+                    {"food": "pão de forma", "role": "carb"},
+                    {"food": "whey", "role": "protein", "max_g": 30},
+                ],
+            }
+        ]
+    }
+    out = fit_meals(db, args)
+    assert len(out.results) == 1
+    res = out.results[0]
+    assert res.feasible is True
+
+    whey_item = next(it for it in res.items if it.food_id == 100104)
+    assert whey_item.grams <= 30
+    assert whey_item.grams > 0
+    assert whey_item.household is not None
+    assert whey_item.household.quantity == 1
+    assert whey_item.household.unit == "dose"
+
+

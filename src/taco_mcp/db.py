@@ -1,12 +1,13 @@
 """Database operations for TACO data."""
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, List, Optional, Union
 import yaml
 
-from .normalize import normalize_query, parse_br_number, round_macro
+from .normalize import normalize_query, parse_br_number, remove_accents, round_macro
 from .schemas import (
     CalculateMacrosOutput, CalculatedMacros,
     CalculateMealMacrosOutput, GetFoodOutput,
@@ -265,7 +266,7 @@ class TacoDB:
             conn.close()
 
     def seed_default_custom_foods(self):
-        """Seed default common Brazilian custom foods like Tapioca goma hidratada, Macarrão cozido, etc."""
+        """Seed default common Brazilian custom foods like Tapioca goma hidratada, Macarrão cozido, Whey protein, etc."""
         self._init_custom_foods_table()
         defaults = [
             (
@@ -292,19 +293,130 @@ class TacoDB:
                 "Grão-de-bico cozido (IBGE/USDA)",
                 "[]",
             ),
+            (
+                104,
+                "Whey protein concentrado (média de marcas)",
+                "Suplementos",
+                408.0, 71.6, 6.3, 15.8, 0.0, 0.0,
+                "1 dose = 30 g. Item genérico (média de marcas). Estado: pó. Alérgenos: leite (pode conter soja). Aliases: whey, whey protein, whey concentrado, wpc, proteina em po, proteína em pó, proteina",
+                '["leite", "pode conter soja"]',
+            ),
+            (
+                105,
+                "Whey protein isolado (média de marcas)",
+                "Suplementos",
+                372.0, 85.0, 0.4, 6.2, 0.0, 0.0,
+                "1 dose = 30 g. Item genérico (média de marcas). Estado: pó. Alérgenos: leite (pode conter soja). Aliases: whey, whey protein, whey isolado, whey isolate, wpi, proteina em po, proteína em pó, proteina",
+                '["leite", "pode conter soja"]',
+            ),
+            (
+                106,
+                "Whey protein concentrado Growth",
+                "Suplementos",
+                409.0, 75.8, 6.4, 12.1, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Growth. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:growth", "leite", "pode conter soja"]',
+            ),
+            (
+                107,
+                "Whey protein concentrado Max Titanium",
+                "Suplementos",
+                415.0, 70.0, 8.3, 16.0, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Max Titanium. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:max titanium", "leite", "pode conter soja"]',
+            ),
+            (
+                108,
+                "Whey protein concentrado Dux",
+                "Suplementos",
+                412.0, 67.3, 7.2, 19.2, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Dux. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:dux", "leite", "pode conter soja"]',
+            ),
+            (
+                109,
+                "Whey protein concentrado Integralmédica",
+                "Suplementos",
+                399.0, 67.7, 6.0, 18.1, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Integralmédica. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:integralmedica", "leite", "pode conter soja"]',
+            ),
+            (
+                110,
+                "Whey protein concentrado Black Skull",
+                "Suplementos",
+                417.0, 70.0, 6.3, 19.7, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Black Skull. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:black skull", "leite", "pode conter soja"]',
+            ),
+            (
+                111,
+                "Whey protein Optimum Nutrition Gold Standard",
+                "Suplementos",
+                395.0, 78.9, 3.3, 9.9, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Optimum Nutrition Gold Standard. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:optimum nutrition", "leite", "pode conter soja"]',
+            ),
+            (
+                112,
+                "Whey protein isolado Growth",
+                "Suplementos",
+                387.0, 86.7, 0.0, 8.2, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Growth. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:growth", "leite", "pode conter soja"]',
+            ),
+            (
+                113,
+                "Whey protein isolado Max Titanium",
+                "Suplementos",
+                397.0, 86.7, 2.0, 8.3, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Max Titanium. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:max titanium", "leite", "pode conter soja"]',
+            ),
+            (
+                114,
+                "Whey protein isolado Dux",
+                "Suplementos",
+                364.0, 80.0, 0.3, 6.0, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Dux. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:dux", "leite", "pode conter soja"]',
+            ),
+            (
+                115,
+                "Whey protein isolado Integralmédica",
+                "Suplementos",
+                370.0, 86.7, 0.0, 6.7, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Integralmédica. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:integralmedica", "leite", "pode conter soja"]',
+            ),
+            (
+                116,
+                "Whey protein isolado Probiótica",
+                "Suplementos",
+                367.0, 86.7, 0.0, 4.7, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Probiótica. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:probiotica", "leite", "pode conter soja"]',
+            ),
+            (
+                117,
+                "Whey protein isolado Optimum Nutrition Gold Standard",
+                "Suplementos",
+                347.0, 83.3, 0.0, 3.3, 0.0, 0.0,
+                "1 dose = 30 g. Marca: Optimum Nutrition Gold Standard. Estado: pó. Alérgenos: leite (pode conter soja).",
+                '["referência de marca", "marca:optimum nutrition", "leite", "pode conter soja"]',
+            ),
         ]
         conn = self._get_connection()
         try:
             for item in defaults:
-                cursor = conn.execute("SELECT id FROM custom_foods WHERE id = ?", (item[0],))
-                if not cursor.fetchone():
-                    conn.execute("""
-                        INSERT OR REPLACE INTO custom_foods
-                        (id, name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                         carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, item)
-                    conn.execute("INSERT OR REPLACE INTO custom_foods_fts(rowid, name) VALUES (?, ?)", (item[0], item[1]))
+                conn.execute("""
+                    INSERT OR REPLACE INTO custom_foods
+                    (id, name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                     carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, item)
+                conn.execute("INSERT OR REPLACE INTO custom_foods_fts(rowid, name) VALUES (?, ?)", (item[0], item[1]))
+            conn.execute("INSERT INTO custom_foods_fts(custom_foods_fts) VALUES('rebuild')")
             conn.commit()
         finally:
             conn.close()
@@ -537,38 +649,119 @@ class TacoDB:
         self._init_custom_foods_table()
         
         normalized = normalize_query(query)
-        results: List[FoodResult] = []
+        candidates: List[dict] = []
         
         conn = self._get_connection()
         try:
+            # 1. Search via FTS
             cursor = conn.execute(
                 """SELECT custom_foods.id, custom_foods.name, custom_foods.category,
                           custom_foods.kcal_per_100g, custom_foods.protein_g_per_100g,
                           custom_foods.fat_g_per_100g, custom_foods.carbs_g_per_100g,
-                          custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g
+                          custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g,
+                          custom_foods.tags, custom_foods.notes
                    FROM custom_foods_fts
                    JOIN custom_foods ON custom_foods_fts.rowid = custom_foods.id
-                   WHERE custom_foods_fts MATCH ?
-                   LIMIT ?""",
-                (normalized, limit)
+                   WHERE custom_foods_fts MATCH ?""",
+                (normalized,)
             )
             for row in cursor:
-                results.append(FoodResult(
-                    food_id=row['id'] + id_offset,  # Add offset
-                    description=row['name'],
-                    category=row['category'],
-                    per_100g=MacroPer100g(
-                        kcal=row['kcal_per_100g'],
-                        protein_g=row['protein_g_per_100g'],
-                        fat_g=row['fat_g_per_100g'],
-                        carbs_g=row['carbs_g_per_100g'],
-                        fiber_g=row['fiber_g_per_100g'],
-                        sodium_mg=row['sodium_mg_per_100g']
-                    ),
-                    match_reason='custom',
-                    confidence=1.0
-                ))
+                candidates.append(dict(row))
+
+            existing_ids = {r['id'] for r in candidates}
+
+            # 2. Check aliases
+            alias_id = self._aliases.get(normalized.lower())
+            if alias_id and alias_id >= id_offset:
+                raw_id = alias_id - id_offset
+                if raw_id not in existing_ids:
+                    cur_alias = conn.execute(
+                        """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                  fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                  sodium_mg_per_100g, tags, notes
+                           FROM custom_foods WHERE id = ?""",
+                        (raw_id,)
+                    )
+                    row = cur_alias.fetchone()
+                    if row:
+                        existing_ids.add(row['id'])
+                        candidates.append(dict(row))
+
+            # 3. Check notes for keyword matches (e.g. for "proteína em pó")
+            words = [w for w in normalized.split() if len(w) >= 2]
+            if words:
+                cur_notes = conn.execute(
+                    """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                              fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                              sodium_mg_per_100g, tags, notes
+                       FROM custom_foods"""
+                )
+                for row in cur_notes:
+                    if row['id'] in existing_ids:
+                        continue
+                    notes_clean = remove_accents((row['notes'] or '').lower())
+                    if all(w in notes_clean for w in words):
+                        existing_ids.add(row['id'])
+                        candidates.append(dict(row))
         finally:
             conn.close()
-        
+
+        # Filter and rank brand items
+        filtered: List[tuple[int, dict]] = []
+        for c in candidates:
+            tags_json = c.get('tags', '[]')
+            try:
+                tags = json.loads(tags_json) if tags_json else []
+            except Exception:
+                tags = []
+            
+            is_brand_ref = any("marca" in str(t).lower() for t in tags)
+            if is_brand_ref:
+                # Must cite brand to appear
+                brand_tokens = set()
+                for t in tags:
+                    t_str = str(t).lower().strip()
+                    if t_str.startswith("marca:"):
+                        brand_tokens.update(remove_accents(t_str[6:].strip()).split())
+                
+                name_norm = remove_accents(c['name'].lower())
+                generic_words = {
+                    "whey", "protein", "concentrado", "isolado", "isolate", "po",
+                    "suplemento", "media", "marcas", "de", "em", "com", "sem", "1", "dose"
+                }
+                for w in re.findall(r"\b[a-z0-9]+\b", name_norm):
+                    if w not in generic_words and len(w) >= 2:
+                        brand_tokens.add(w)
+                        if w.startswith("integral"):
+                            brand_tokens.add("integral")
+                            brand_tokens.add("integralmedica")
+                
+                q_words = set(re.findall(r"\b[a-z0-9]+\b", normalized))
+                brand_cited = any(bt in q_words or bt in normalized for bt in brand_tokens)
+                if not brand_cited:
+                    continue  # Skip branded item when brand not cited
+                filtered.append((1, c))
+            else:
+                filtered.append((0, c))
+
+        # Sort: priority 0 (generic) first, then priority 1 (brand)
+        filtered.sort(key=lambda x: x[0])
+
+        results: List[FoodResult] = []
+        for _, row in filtered[:limit]:
+            results.append(FoodResult(
+                food_id=row['id'] + id_offset,
+                description=row['name'],
+                category=row['category'],
+                per_100g=MacroPer100g(
+                    kcal=row['kcal_per_100g'],
+                    protein_g=row['protein_g_per_100g'],
+                    fat_g=row['fat_g_per_100g'],
+                    carbs_g=row['carbs_g_per_100g'],
+                    fiber_g=row['fiber_g_per_100g'],
+                    sodium_mg=row['sodium_mg_per_100g']
+                ),
+                match_reason='custom',
+                confidence=1.0
+            ))
         return results

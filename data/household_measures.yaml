@@ -404,3 +404,173 @@
   unit_plural: "unidades médias"
   grams_per_unit: 120.0
 
+# --- Suplementos ---
+- food_id: 104
+  description: "Whey protein concentrado (média de marcas)"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100104
+  description: "Whey protein concentrado (média de marcas)"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 105
+  description: "Whey protein isolado (média de marcas)"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100105
+  description: "Whey protein isolado (média de marcas)"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 106
+  description: "Whey protein concentrado Growth"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100106
+  description: "Whey protein concentrado Growth"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 107
+  description: "Whey protein concentrado Max Titanium"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100107
+  description: "Whey protein concentrado Max Titanium"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 108
+  description: "Whey protein concentrado Dux"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100108
+  description: "Whey protein concentrado Dux"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 109
+  description: "Whey protein concentrado Integralmédica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100109
+  description: "Whey protein concentrado Integralmédica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 110
+  description: "Whey protein concentrado Black Skull"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100110
+  description: "Whey protein concentrado Black Skull"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 111
+  description: "Whey protein Optimum Nutrition Gold Standard"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100111
+  description: "Whey protein Optimum Nutrition Gold Standard"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 112
+  description: "Whey protein isolado Growth"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100112
+  description: "Whey protein isolado Growth"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 113
+  description: "Whey protein isolado Max Titanium"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100113
+  description: "Whey protein isolado Max Titanium"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 114
+  description: "Whey protein isolado Dux"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100114
+  description: "Whey protein isolado Dux"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 115
+  description: "Whey protein isolado Integralmédica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100115
+  description: "Whey protein isolado Integralmédica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 116
+  description: "Whey protein isolado Probiótica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100116
+  description: "Whey protein isolado Probiótica"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 117
+  description: "Whey protein isolado Optimum Nutrition Gold Standard"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+- food_id: 100117
+  description: "Whey protein isolado Optimum Nutrition Gold Standard"
+  unit: "dose"
+  unit_plural: "doses"
+  grams_per_unit: 30.0
+
+

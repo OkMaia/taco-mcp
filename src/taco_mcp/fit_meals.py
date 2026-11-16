@@ -193,6 +193,31 @@ COMMON_MEAL_ALIASES = {
     "pão integral": 52,
     "pao de forma": 52,
     "pão de forma": 52,
+    "whey": 100104,
+    "whey protein": 100104,
+    "whey concentrado": 100104,
+    "whey protein concentrado": 100104,
+    "wpc": 100104,
+    "proteina em po": 100104,
+    "proteína em pó": 100104,
+    "whey isolado": 100105,
+    "whey protein isolado": 100105,
+    "whey isolate": 100105,
+    "wpi": 100105,
+    "whey concentrado growth": 100106,
+    "whey growth concentrado": 100106,
+    "whey concentrado max titanium": 100107,
+    "whey concentrado dux": 100108,
+    "whey concentrado integralmedica": 100109,
+    "whey concentrado black skull": 100110,
+    "whey gold standard": 100111,
+    "whey isolado growth": 100112,
+    "whey growth isolado": 100112,
+    "whey isolado max titanium": 100113,
+    "whey isolado dux": 100114,
+    "whey isolado integralmedica": 100115,
+    "whey isolado probiotica": 100116,
+    "whey isolado gold standard": 100117,
 }
 
 _HOUSEHOLD_MEASURES_CACHE: Optional[dict[int, dict[str, Any]]] = None
@@ -803,6 +828,10 @@ def resolve_food(
         if search_res.results:
             top = search_res.results[0]
             return (top.food_id, top.description, top.per_100g, food_str, [])
+        custom_res = db.search_custom_foods(clean_food_str, limit=5, id_offset=100000)
+        if custom_res:
+            top = custom_res[0]
+            return (top.food_id, top.description, top.per_100g, food_str, [])
     except Exception:
         pass
 
@@ -909,10 +938,11 @@ def solve_meal_option(
             min_g = item.min_g if item.min_g is not None else 50.0
             max_g = item.max_g if item.max_g is not None else 100.0
         else:
-            min_g = item.min_g if item.min_g is not None else defaults["min_g"]
             if item.max_g is not None:
                 max_g = item.max_g
+                min_g = item.min_g if item.min_g is not None else min(defaults["min_g"], max_g)
             else:
+                min_g = item.min_g if item.min_g is not None else defaults["min_g"]
                 if item.role == "carb" and target.carb_g < LOW_CARB_THRESHOLD_G:
                     max_g = LOW_CARB_DEFAULT_MAX_G
                 else:
