@@ -184,8 +184,33 @@ Para um cliente MCP remoto, informe essa URL e o header:
 Authorization: Bearer <MCP_AUTH_TOKEN>
 ```
 
-O SQLite do Heroku é efêmero; por isso o deploy é deliberadamente somente
-leitura e não persiste alimentos customizados entre reinicializações.
+### Persistência com PostgreSQL no Heroku
+
+Por padrão, sem banco externo configurado, o SQLite do Heroku é efêmero e o servidor opera em modo somente leitura.
+
+Para habilitar inserção, listagem e remoção persistente de alimentos customizados no Heroku, adicione o Heroku Postgres:
+
+```bash
+heroku addons:create heroku-postgresql:essential-0
+```
+
+Ou configure a variável `DATABASE_URL` com a URL do seu Postgres:
+
+```bash
+heroku config:set DATABASE_URL="postgres://usuario:senha@host:5432/banco"
+```
+
+Para migrar a base TACO inicial e os grupos de substituição para o PostgreSQL:
+
+```bash
+python scripts/migrate_to_postgres.py "$DATABASE_URL"
+```
+
+Com `DATABASE_URL` configurada, o servidor remoto automaticamente ativa o modo leitura e escrita, disponibilizando:
+- `add_custom_food`
+- `list_custom_foods`
+- `delete_custom_food`
+- Todas as consultas oficiais (`search_food`, `get_food`, `calculate_macros`, `fit_meals`) integrando os alimentos customizados em tempo real.
 
 ---
 

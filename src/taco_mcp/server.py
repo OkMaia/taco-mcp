@@ -37,9 +37,10 @@ def find_db_path() -> Path:
     return candidates[0]
 
 DB_PATH = find_db_path()
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Initialize database
-db = TacoDB(DB_PATH)
+db = TacoDB(db_path=DB_PATH, database_url=DATABASE_URL)
 
 # Create MCP server
 app = Server("taco-mcp")
@@ -60,7 +61,10 @@ CUSTOM_TOOL_NAMES = frozenset({
 
 def is_read_only_mode() -> bool:
     """Return whether the server should expose only official read-only tools."""
-    return os.getenv("TACO_MCP_READ_ONLY", "").lower() in {"1", "true", "yes", "on"}
+    env_val = os.getenv("TACO_MCP_READ_ONLY")
+    if env_val is not None:
+        return env_val.lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 @app.list_tools()
@@ -574,8 +578,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
 async def _async_main():
     """Run MCP server."""
-    # Check database exists
-    if not DB_PATH.exists():
+    # Check database exists (only if not using PostgreSQL)
+    if not db.is_postgres and not DB_PATH.exists():
         print(f"Database not found at {DB_PATH}", file=__import__('sys').stderr)
         print("Run: python scripts/download_taco.py && python scripts/build_db.py", file=__import__('sys').stderr)
         raise FileNotFoundError(f"Database not found: {DB_PATH}")

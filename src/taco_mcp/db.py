@@ -1,6 +1,7 @@
-"""Database operations for TACO data."""
+"""Database operations for TACO data (SQLite and PostgreSQL support)."""
 
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -17,17 +18,26 @@ from .schemas import (
 
 
 class TacoDB:
-    """TACO database wrapper."""
-    
-    def __init__(self, db_path: Path):
+    """TACO database wrapper supporting both SQLite and PostgreSQL."""
+
+    def __init__(self, db_path: Optional[Path] = None, database_url: Optional[str] = None):
         self.db_path = db_path
+        raw_url = database_url or os.getenv("DATABASE_URL")
+        if raw_url and raw_url.startswith("postgres://"):
+            raw_url = "postgresql://" + raw_url[len("postgres://"):]
+        self.database_url = raw_url
+        self.is_postgres = bool(self.database_url)
+
         self._aliases: dict = {}
         self._load_aliases()
-        if self.db_path.exists():
+
+        if self.is_postgres:
+            self._init_postgres_tables()
+        elif self.db_path and self.db_path.exists():
             self._init_custom_foods_table()
             self.seed_default_custom_foods()
             self._init_substitution_groups_table()
-    
+
     def _load_aliases(self):
         """Load aliases from YAML file."""
         candidates = [
@@ -41,14 +51,18 @@ class TacoDB:
                     self._aliases = yaml.safe_load(f) or {}
                 return
         self._aliases = {}
-    
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get database connection."""
+
+    def _get_connection(self):
+        """Get database connection (SQLite or PostgreSQL)."""
+        if self.is_postgres:
+            import psycopg
+            from psycopg.rows import dict_row
+            return psycopg.connect(self.database_url, row_factory=dict_row)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
-    
-    def _row_to_macros(self, row: sqlite3.Row) -> MacroPer100g:
+
+    def _row_to_macros(self, row: Any) -> MacroPer100g:
         """Convert row to MacroPer100g."""
         return MacroPer100g(
             kcal=row['kcal_per_100g'],
@@ -58,70 +72,285 @@ class TacoDB:
             fiber_g=row['fiber_g_per_100g'],
             sodium_mg=row['sodium_mg_per_100g']
         )
-    
+
+    # ========== PostgreSQL Initialization ==========
+
+    def _init_postgres_tables(self):
+        """Initialize PostgreSQL tables if they don't exist."""
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS unaccent;")
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+                except Exception:
+                    pass
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS foods (
+                        id INTEGER PRIMARY KEY,
+                        source_id INTEGER NOT NULL,
+                        category TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        description_normalized TEXT NOT NULL,
+                        kcal_per_100g DOUBLE PRECISION,
+                        protein_g_per_100g DOUBLE PRECISION,
+                        fat_g_per_100g DOUBLE PRECISION,
+                        carbs_g_per_100g DOUBLE PRECISION,
+                        fiber_g_per_100g DOUBLE PRECISION,
+                        sodium_mg_per_100g DOUBLE PRECISION,
+                        raw_json TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_foods_desc_trgm ON foods USING gin (description_normalized gin_trgm_ops);
+                """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS custom_foods (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        name_normalized TEXT NOT NULL,
+                        category TEXT DEFAULT 'Custom',
+                        kcal_per_100g DOUBLE PRECISION,
+                        protein_g_per_100g DOUBLE PRECISION,
+                        fat_g_per_100g DOUBLE PRECISION,
+                        carbs_g_per_100g DOUBLE PRECISION,
+                        fiber_g_per_100g DOUBLE PRECISION,
+                        sodium_mg_per_100g DOUBLE PRECISION,
+                        notes TEXT,
+                        tags TEXT DEFAULT '[]',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_custom_foods_name_trgm ON custom_foods USING gin (name_normalized gin_trgm_ops);
+                """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS substitution_groups (
+                        food_id INTEGER,
+                        name TEXT,
+                        group_name TEXT,
+                        tags TEXT,
+                        common BOOLEAN DEFAULT TRUE,
+                        step_g DOUBLE PRECISION DEFAULT 5.0,
+                        min_g DOUBLE PRECISION DEFAULT 10.0,
+                        max_g DOUBLE PRECISION DEFAULT 300.0,
+                        liquid BOOLEAN DEFAULT FALSE,
+                        PRIMARY KEY (food_id, group_name)
+                    );
+                """)
+
+                cur.execute("SELECT COUNT(*) as c FROM foods")
+                count = cur.fetchone()["c"]
+                if count == 0 and self.db_path and self.db_path.exists():
+                    self._seed_postgres_from_sqlite(cur)
+
+                cur.execute("SELECT COUNT(*) as c FROM substitution_groups")
+                sub_count = cur.fetchone()["c"]
+                if sub_count == 0:
+                    self._populate_substitution_groups_pg(cur)
+
+                cur.execute("SELECT COUNT(*) as c FROM custom_foods")
+                cust_count = cur.fetchone()["c"]
+                if cust_count == 0:
+                    self._seed_default_custom_foods_pg(cur)
+
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _seed_postgres_from_sqlite(self, cur):
+        """Seed PostgreSQL foods table from local SQLite."""
+        if not self.db_path or not self.db_path.exists():
+            return
+        sqlite_conn = sqlite3.connect(self.db_path)
+        sqlite_conn.row_factory = sqlite3.Row
+        try:
+            rows = sqlite_conn.execute("SELECT * FROM foods").fetchall()
+            for r in rows:
+                desc_norm = normalize_query(r["description"])
+                cur.execute("""
+                    INSERT INTO foods
+                    (id, source_id, category, description, description_normalized,
+                     kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                     carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, raw_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                """, (
+                    r["id"], r["source_id"], r["category"], r["description"], desc_norm,
+                    r["kcal_per_100g"], r["protein_g_per_100g"], r["fat_g_per_100g"],
+                    r["carbs_g_per_100g"], r["fiber_g_per_100g"], r["sodium_mg_per_100g"],
+                    r["raw_json"]
+                ))
+        finally:
+            sqlite_conn.close()
+
+    def _populate_substitution_groups_pg(self, cur):
+        """Populate substitution_groups in PostgreSQL from YAML."""
+        candidates = [
+            Path(__file__).parent / "data" / "substitution_groups.yaml",
+            Path(__file__).parent.parent.parent / "data" / "substitution_groups.yaml",
+            Path.cwd() / "data" / "substitution_groups.yaml",
+        ]
+        data = []
+        for p in candidates:
+            if p.exists():
+                with open(p, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or []
+                break
+
+        for item in data:
+            food_id = item.get("food_id")
+            name = item.get("name", "")
+            group_name = item.get("group", "")
+            tags_json = json.dumps([t.lower().strip() for t in item.get("tags", [])])
+            common = bool(item.get("common", True))
+            step_g = float(item.get("step_g", 5.0))
+            min_g = float(item.get("min_g", 10.0))
+            max_g = float(item.get("max_g", 300.0))
+            liquid = bool(item.get("liquid", False))
+            cur.execute("""
+                INSERT INTO substitution_groups
+                (food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (food_id, group_name) DO NOTHING
+            """, (food_id, name, group_name, tags_json, common, step_g, min_g, max_g, liquid))
+
+    def _seed_default_custom_foods_pg(self, cur):
+        """Seed default custom foods into PostgreSQL."""
+        defaults = self._get_default_custom_food_tuples()
+        for item in defaults:
+            name_norm = normalize_query(item[1])
+            cur.execute("""
+                INSERT INTO custom_foods
+                (id, name, name_normalized, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                 carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+            """, (item[0], item[1], name_norm, item[2], item[3], item[4], item[5], item[6], item[7], item[8], item[9], item[10]))
+
+        cur.execute("""
+            SELECT setval(
+                pg_get_serial_sequence('custom_foods', 'id'),
+                COALESCE((SELECT MAX(id) FROM custom_foods), 1) + 1,
+                false
+            );
+        """)
+
+    # ========== Search & Retrieve Foods ==========
+
     def search_food(self, query: str, limit: int = 5) -> SearchFoodOutput:
         """Search for foods by name."""
         normalized = normalize_query(query)
         results: List[FoodResult] = []
-        
+
         conn = self._get_connection()
         try:
-            # Check aliases first
-            alias_id = self._aliases.get(normalized.lower())
-            if alias_id:
-                cursor = conn.execute(
-                    """SELECT id, source_id, category, description,
-                              kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                              carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
-                       FROM foods WHERE id = ?""",
-                    (alias_id,)
-                )
-                row = cursor.fetchone()
-                if row:
-                    results.append(FoodResult(
-                        food_id=row['id'],
-                        description=row['description'],
-                        category=row['category'],
-                        per_100g=self._row_to_macros(row),
-                        match_reason='alias',
-                        confidence=1.0
-                    ))
-            
-            # FTS search
-            if len(results) < limit:
-                cursor = conn.execute(
-                    """SELECT foods.id, foods.source_id, foods.category, foods.description,
-                              foods.kcal_per_100g, foods.protein_g_per_100g, foods.fat_g_per_100g,
-                              foods.carbs_g_per_100g, foods.fiber_g_per_100g, foods.sodium_mg_per_100g,
-                              rank
-                       FROM foods_fts
-                       JOIN foods ON foods_fts.rowid = foods.id
-                       WHERE foods_fts MATCH ?
-                       ORDER BY rank
-                       LIMIT ?""",
-                    (normalized, limit - len(results))
-                )
-                for row in cursor:
-                    # Skip if already added via alias
-                    if any(r.food_id == row['id'] for r in results):
-                        continue
-                    results.append(FoodResult(
-                        food_id=row['id'],
-                        description=row['description'],
-                        category=row['category'],
-                        per_100g=self._row_to_macros(row),
-                        match_reason='fts',
-                        confidence=1.0 / (1 + abs(row['rank']))
-                    ))
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    # Check aliases first
+                    alias_id = self._aliases.get(normalized.lower())
+                    if alias_id:
+                        cur.execute(
+                            """SELECT id, source_id, category, description,
+                                      kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                                      carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
+                               FROM foods WHERE id = %s""",
+                            (alias_id,)
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            results.append(FoodResult(
+                                food_id=row['id'],
+                                description=row['description'],
+                                category=row['category'],
+                                per_100g=self._row_to_macros(row),
+                                match_reason='alias',
+                                confidence=1.0
+                            ))
+
+                    # PostgreSQL search
+                    if len(results) < limit:
+                        words = [w for w in normalized.split() if w]
+                        if words:
+                            conditions = " AND ".join(["description_normalized ILIKE %s" for _ in words])
+                            params = [f"%{w}%" for w in words]
+                            sql = f"""
+                                SELECT id, source_id, category, description,
+                                       kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                                       carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g,
+                                       similarity(description_normalized, %s) AS sim
+                                FROM foods
+                                WHERE {conditions}
+                                ORDER BY (CASE WHEN description_normalized ILIKE %s THEN 0 ELSE 1 END),
+                                         sim DESC, id ASC
+                                LIMIT %s
+                            """
+                            cur.execute(sql, [normalized] + params + [f"{normalized}%", limit - len(results)])
+                            for row in cur.fetchall():
+                                if any(r.food_id == row['id'] for r in results):
+                                    continue
+                                results.append(FoodResult(
+                                    food_id=row['id'],
+                                    description=row['description'],
+                                    category=row['category'],
+                                    per_100g=self._row_to_macros(row),
+                                    match_reason='fts',
+                                    confidence=round(float(row.get('sim') or 1.0), 3)
+                                ))
+            else:
+                # SQLite search
+                alias_id = self._aliases.get(normalized.lower())
+                if alias_id:
+                    cursor = conn.execute(
+                        """SELECT id, source_id, category, description,
+                                  kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                                  carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
+                           FROM foods WHERE id = ?""",
+                        (alias_id,)
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        results.append(FoodResult(
+                            food_id=row['id'],
+                            description=row['description'],
+                            category=row['category'],
+                            per_100g=self._row_to_macros(row),
+                            match_reason='alias',
+                            confidence=1.0
+                        ))
+
+                if len(results) < limit:
+                    cursor = conn.execute(
+                        """SELECT foods.id, foods.source_id, foods.category, foods.description,
+                                  foods.kcal_per_100g, foods.protein_g_per_100g, foods.fat_g_per_100g,
+                                  foods.carbs_g_per_100g, foods.fiber_g_per_100g, foods.sodium_mg_per_100g,
+                                  rank
+                           FROM foods_fts
+                           JOIN foods ON foods_fts.rowid = foods.id
+                           WHERE foods_fts MATCH ?
+                           ORDER BY rank
+                           LIMIT ?""",
+                        (normalized, limit - len(results))
+                    )
+                    for row in cursor:
+                        if any(r.food_id == row['id'] for r in results):
+                            continue
+                        results.append(FoodResult(
+                            food_id=row['id'],
+                            description=row['description'],
+                            category=row['category'],
+                            per_100g=self._row_to_macros(row),
+                            match_reason='fts',
+                            confidence=1.0 / (1 + abs(row['rank']))
+                        ))
         finally:
             conn.close()
-        
+
         return SearchFoodOutput(
             query=query,
             normalized_query=normalized,
             results=results
         )
-    
+
     def get_food(self, food_id: int) -> Optional[GetFoodOutput]:
         """Get food by ID (official TACO food, or custom food)."""
         if food_id >= 100000:
@@ -129,38 +358,58 @@ class TacoDB:
 
         conn = self._get_connection()
         try:
-            cursor = conn.execute(
-                """SELECT id, source_id, category, description,
-                          kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                          carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
-                   FROM foods WHERE id = ?""",
-                (food_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                return self.get_custom_food(food_id)
-            
-            return GetFoodOutput(
-                food_id=row['id'],
-                description=row['description'],
-                category=row['category'],
-                per_100g=self._row_to_macros(row)
-            )
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT id, source_id, category, description,
+                                  kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                                  carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
+                           FROM foods WHERE id = %s""",
+                        (food_id,)
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return self.get_custom_food(food_id)
+
+                    return GetFoodOutput(
+                        food_id=row['id'],
+                        description=row['description'],
+                        category=row['category'],
+                        per_100g=self._row_to_macros(row)
+                    )
+            else:
+                cursor = conn.execute(
+                    """SELECT id, source_id, category, description,
+                              kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                              carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g
+                       FROM foods WHERE id = ?""",
+                    (food_id,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return self.get_custom_food(food_id)
+
+                return GetFoodOutput(
+                    food_id=row['id'],
+                    description=row['description'],
+                    category=row['category'],
+                    per_100g=self._row_to_macros(row)
+                )
         finally:
             conn.close()
-    
+
     def calculate_macros(self, food_id: int, grams: float) -> Optional[CalculateMacrosOutput]:
         """Calculate macros for specific gram amount."""
         food = self.get_food(food_id)
         if not food:
             return None
-        
+
         per_100g = food.per_100g
         factor = grams / 100.0
-        
+
         def calc(val):
             return round_macro(val * factor, decimals=2) if val is not None else None
-        
+
         macros = CalculatedMacros(
             kcal=calc(per_100g.kcal),
             protein_g=calc(per_100g.protein_g),
@@ -169,14 +418,14 @@ class TacoDB:
             fiber_g=calc(per_100g.fiber_g),
             sodium_mg=calc(per_100g.sodium_mg)
         )
-        
+
         return CalculateMacrosOutput(
             food_id=food_id,
             description=food.description,
             grams=grams,
             macros=macros
         )
-    
+
     def calculate_meal_macros(
         self, items: List[MealItemInput]
     ) -> CalculateMealMacrosOutput:
@@ -184,20 +433,20 @@ class TacoDB:
         meal_items: List[MealItemOutput] = []
         warnings: List[str] = []
         total = MealTotal()
-        
+
         for item in items:
             result = self.calculate_macros(item.food_id, item.grams)
             if not result:
                 warnings.append(f"Food ID {item.food_id} not found")
                 continue
-            
+
             meal_items.append(MealItemOutput(
                 food_id=result.food_id,
                 description=result.description,
                 grams=result.grams,
                 macros=result.macros
             ))
-            
+
             m = result.macros
             if m.kcal:
                 total.kcal += m.kcal
@@ -211,7 +460,7 @@ class TacoDB:
                 total.fiber_g += m.fiber_g
             if m.sodium_mg:
                 total.sodium_mg += m.sodium_mg
-        
+
         # Round totals
         total.kcal = round(total.kcal, 1)
         total.protein_g = round(total.protein_g, 2)
@@ -219,56 +468,18 @@ class TacoDB:
         total.fat_g = round(total.fat_g, 2)
         total.fiber_g = round(total.fiber_g, 2)
         total.sodium_mg = round(total.sodium_mg, 2)
-        
+
         return CalculateMealMacrosOutput(
             source="TACO",
             items=meal_items,
             total=total,
             warnings=warnings
         )
-    
-    # ========== Custom Foods ==========
-    
-    def _init_custom_foods_table(self):
-        """Initialize custom foods table if not exists."""
-        conn = self._get_connection()
-        try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS custom_foods (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    category TEXT DEFAULT 'Custom',
-                    kcal_per_100g REAL,
-                    protein_g_per_100g REAL,
-                    fat_g_per_100g REAL,
-                    carbs_g_per_100g REAL,
-                    fiber_g_per_100g REAL,
-                    sodium_mg_per_100g REAL,
-                    notes TEXT,
-                    tags TEXT DEFAULT '[]',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            try:
-                conn.execute("ALTER TABLE custom_foods ADD COLUMN tags TEXT DEFAULT '[]'")
-            except Exception:
-                pass
-            conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS custom_foods_fts USING fts5(
-                    name,
-                    content='custom_foods',
-                    content_rowid='id',
-                    tokenize='unicode61 remove_diacritics 2'
-                )
-            """)
-            conn.commit()
-        finally:
-            conn.close()
 
-    def seed_default_custom_foods(self):
-        """Seed default common Brazilian custom foods like Tapioca goma hidratada, Macarrão cozido, Whey protein, etc."""
-        self._init_custom_foods_table()
-        defaults = [
+    # ========== Custom Foods ==========
+
+    def _get_default_custom_food_tuples(self) -> List[tuple]:
+        return [
             (
                 101,
                 "Tapioca, goma hidratada",
@@ -406,6 +617,47 @@ class TacoDB:
                 '["referência de marca", "marca:optimum nutrition", "leite", "pode conter soja"]',
             ),
         ]
+
+    def _init_custom_foods_table(self):
+        """Initialize custom foods table if not exists (SQLite)."""
+        conn = self._get_connection()
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS custom_foods (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    category TEXT DEFAULT 'Custom',
+                    kcal_per_100g REAL,
+                    protein_g_per_100g REAL,
+                    fat_g_per_100g REAL,
+                    carbs_g_per_100g REAL,
+                    fiber_g_per_100g REAL,
+                    sodium_mg_per_100g REAL,
+                    notes TEXT,
+                    tags TEXT DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            try:
+                conn.execute("ALTER TABLE custom_foods ADD COLUMN tags TEXT DEFAULT '[]'")
+            except Exception:
+                pass
+            conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS custom_foods_fts USING fts5(
+                    name,
+                    content='custom_foods',
+                    content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def seed_default_custom_foods(self):
+        """Seed default common Brazilian custom foods (SQLite)."""
+        self._init_custom_foods_table()
+        defaults = self._get_default_custom_food_tuples()
         conn = self._get_connection()
         try:
             for item in defaults:
@@ -422,7 +674,7 @@ class TacoDB:
             conn.close()
 
     def _init_substitution_groups_table(self):
-        """Initialize substitution_groups table if not exists and populate from YAML."""
+        """Initialize substitution_groups table if not exists (SQLite)."""
         conn = self._get_connection()
         try:
             conn.execute("""
@@ -449,7 +701,7 @@ class TacoDB:
             conn.close()
 
     def _populate_substitution_groups_from_yaml(self, conn: sqlite3.Connection):
-        """Populate substitution_groups table from YAML."""
+        """Populate substitution_groups table from YAML (SQLite)."""
         candidates = [
             Path(__file__).parent / "data" / "substitution_groups.yaml",
             Path(__file__).parent.parent.parent / "data" / "substitution_groups.yaml",
@@ -481,22 +733,41 @@ class TacoDB:
 
     def get_substitution_groups(self) -> dict[str, list[dict[str, Any]]]:
         """Get substitution groups mapped by group name."""
-        self._init_substitution_groups_table()
+        if not self.is_postgres:
+            self._init_substitution_groups_table()
+
         conn = self._get_connection()
         try:
-            cursor = conn.execute(
-                """SELECT food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid
-                   FROM substitution_groups ORDER BY common DESC, name ASC"""
-            )
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid
+                           FROM substitution_groups ORDER BY common DESC, name ASC"""
+                    )
+                    rows = cur.fetchall()
+            else:
+                cursor = conn.execute(
+                    """SELECT food_id, name, group_name, tags, common, step_g, min_g, max_g, liquid
+                       FROM substitution_groups ORDER BY common DESC, name ASC"""
+                )
+                rows = cursor.fetchall()
+
             groups: dict[str, list[dict[str, Any]]] = {}
-            for row in cursor.fetchall():
+            for row in rows:
                 g_name = row["group_name"]
                 if g_name not in groups:
                     groups[g_name] = []
-                try:
-                    tags = json.loads(row["tags"]) if row["tags"] else []
-                except Exception:
+                raw_tags = row["tags"]
+                if isinstance(raw_tags, str):
+                    try:
+                        tags = json.loads(raw_tags) if raw_tags else []
+                    except Exception:
+                        tags = []
+                elif isinstance(raw_tags, list):
+                    tags = raw_tags
+                else:
                     tags = []
+
                 groups[g_name].append({
                     "food_id": row["food_id"],
                     "name": row["name"],
@@ -511,7 +782,7 @@ class TacoDB:
             return groups
         finally:
             conn.close()
-    
+
     def add_custom_food(
         self,
         name: str,
@@ -526,8 +797,6 @@ class TacoDB:
         tags: Optional[Union[List[str], str]] = None
     ) -> int:
         """Add a custom food. Returns the new food ID."""
-        self._init_custom_foods_table()
-        
         if tags is None:
             tags_list = []
         elif isinstance(tags, str):
@@ -538,93 +807,145 @@ class TacoDB:
 
         conn = self._get_connection()
         try:
-            cursor = conn.execute("""
-                INSERT INTO custom_foods
-                (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                 carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
-                  carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags_json))
-            
-            food_id = cursor.lastrowid
-            
-            # Add to FTS index
-            conn.execute(
-                "INSERT INTO custom_foods_fts(rowid, name) VALUES (?, ?)",
-                (food_id, name)
-            )
-            
-            conn.commit()
-            return food_id
+            if self.is_postgres:
+                name_norm = normalize_query(name)
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO custom_foods
+                        (name, name_normalized, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                         carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (name, name_norm, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                          carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags_json))
+                    food_id = cur.fetchone()['id']
+                conn.commit()
+                return food_id
+            else:
+                self._init_custom_foods_table()
+                cursor = conn.execute("""
+                    INSERT INTO custom_foods
+                    (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                     carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, category, kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
+                      carbs_g_per_100g, fiber_g_per_100g, sodium_mg_per_100g, notes, tags_json))
+                food_id = cursor.lastrowid
+                conn.execute(
+                    "INSERT INTO custom_foods_fts(rowid, name) VALUES (?, ?)",
+                    (food_id, name)
+                )
+                conn.commit()
+                return food_id
         finally:
             conn.close()
-    
+
     def list_custom_foods(self, limit: int = 50) -> List[dict]:
         """List all custom foods."""
-        self._init_custom_foods_table()
-        
         conn = self._get_connection()
         try:
-            cursor = conn.execute(
-                """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
-                          fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
-                          sodium_mg_per_100g, notes, tags, created_at
-                   FROM custom_foods
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (limit,)
-            )
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                  fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                  sodium_mg_per_100g, notes, tags, created_at
+                           FROM custom_foods
+                           ORDER BY created_at DESC, id DESC
+                           LIMIT %s""",
+                        (limit,)
+                    )
+                    rows = cur.fetchall()
+            else:
+                self._init_custom_foods_table()
+                cursor = conn.execute(
+                    """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                              fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                              sodium_mg_per_100g, notes, tags, created_at
+                       FROM custom_foods
+                       ORDER BY created_at DESC
+                       LIMIT ?""",
+                    (limit,)
+                )
+                rows = cursor.fetchall()
+
             foods = []
-            for row in cursor.fetchall():
+            for row in rows:
                 d = dict(row)
+                if 'created_at' in d and d['created_at']:
+                    d['created_at'] = str(d['created_at'])
                 raw_tags = d.get('tags')
-                try:
-                    d['tags'] = json.loads(raw_tags) if raw_tags else []
-                except Exception:
+                if isinstance(raw_tags, str):
+                    try:
+                        d['tags'] = json.loads(raw_tags) if raw_tags else []
+                    except Exception:
+                        d['tags'] = []
+                elif isinstance(raw_tags, list):
+                    d['tags'] = raw_tags
+                else:
                     d['tags'] = []
                 foods.append(d)
             return foods
         finally:
             conn.close()
-    
+
     def delete_custom_food(self, food_id: int) -> bool:
         """Delete a custom food. Returns True if deleted."""
-        self._init_custom_foods_table()
-        
         conn = self._get_connection()
         try:
-            # Delete from FTS first
-            conn.execute("DELETE FROM custom_foods_fts WHERE rowid = ?", (food_id,))
-            
-            # Delete from main table
-            cursor = conn.execute("DELETE FROM custom_foods WHERE id = ?", (food_id,))
-            conn.commit()
-            return cursor.rowcount > 0
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM custom_foods WHERE id = %s", (food_id,))
+                    deleted = cur.rowcount > 0
+                conn.commit()
+                return deleted
+            else:
+                self._init_custom_foods_table()
+                conn.execute("DELETE FROM custom_foods_fts WHERE rowid = ?", (food_id,))
+                cursor = conn.execute("DELETE FROM custom_foods WHERE id = ?", (food_id,))
+                conn.commit()
+                return cursor.rowcount > 0
         finally:
             conn.close()
-    
+
     def get_custom_food(self, food_id: int) -> Optional[GetFoodOutput]:
         """Get custom food by ID (accepts raw ID or offset ID)."""
-        self._init_custom_foods_table()
-        
         lookup_id = food_id - 100000 if food_id >= 100000 else food_id
         conn = self._get_connection()
         try:
-            cursor = conn.execute(
-                """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
-                          fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
-                          sodium_mg_per_100g, tags
-                   FROM custom_foods WHERE id = ?""",
-                (lookup_id,)
-            )
-            row = cursor.fetchone()
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                  fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                  sodium_mg_per_100g, tags
+                           FROM custom_foods WHERE id = %s""",
+                        (lookup_id,)
+                    )
+                    row = cur.fetchone()
+            else:
+                self._init_custom_foods_table()
+                cursor = conn.execute(
+                    """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                              fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                              sodium_mg_per_100g, tags
+                       FROM custom_foods WHERE id = ?""",
+                    (lookup_id,)
+                )
+                row = cursor.fetchone()
+
             if not row:
                 return None
-            
-            raw_tags = row['tags'] if 'tags' in row.keys() and row['tags'] else '[]'
-            try:
-                parsed_tags = json.loads(raw_tags)
-            except Exception:
+
+            raw_tags = row.get('tags') if isinstance(row, dict) else row['tags']
+            if isinstance(raw_tags, str):
+                try:
+                    parsed_tags = json.loads(raw_tags) if raw_tags else []
+                except Exception:
+                    parsed_tags = []
+            elif isinstance(raw_tags, list):
+                parsed_tags = raw_tags
+            else:
                 parsed_tags = []
 
             return GetFoodOutput(
@@ -643,87 +964,143 @@ class TacoDB:
             )
         finally:
             conn.close()
-    
+
     def search_custom_foods(self, query: str, limit: int = 5, id_offset: int = 0) -> List[FoodResult]:
         """Search custom foods."""
-        self._init_custom_foods_table()
-        
         normalized = normalize_query(query)
         candidates: List[dict] = []
-        
+
         conn = self._get_connection()
         try:
-            # 1. Search via FTS
-            cursor = conn.execute(
-                """SELECT custom_foods.id, custom_foods.name, custom_foods.category,
-                          custom_foods.kcal_per_100g, custom_foods.protein_g_per_100g,
-                          custom_foods.fat_g_per_100g, custom_foods.carbs_g_per_100g,
-                          custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g,
-                          custom_foods.tags, custom_foods.notes
-                   FROM custom_foods_fts
-                   JOIN custom_foods ON custom_foods_fts.rowid = custom_foods.id
-                   WHERE custom_foods_fts MATCH ?""",
-                (normalized,)
-            )
-            for row in cursor:
-                candidates.append(dict(row))
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    words = [w for w in normalized.split() if len(w) >= 2]
+                    # 1. Search via name_normalized
+                    if words:
+                        conditions = " AND ".join(["name_normalized ILIKE %s" for _ in words])
+                        params = [f"%{w}%" for w in words]
+                        cur.execute(
+                            f"""SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                      fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                      sodium_mg_per_100g, tags, notes
+                               FROM custom_foods
+                               WHERE {conditions}""",
+                            params
+                        )
+                        for row in cur.fetchall():
+                            candidates.append(dict(row))
 
-            existing_ids = {r['id'] for r in candidates}
+                    existing_ids = {r['id'] for r in candidates}
 
-            # 2. Check aliases
-            alias_id = self._aliases.get(normalized.lower())
-            if alias_id and alias_id >= id_offset:
-                raw_id = alias_id - id_offset
-                if raw_id not in existing_ids:
-                    cur_alias = conn.execute(
+                    # 2. Check aliases
+                    alias_id = self._aliases.get(normalized.lower())
+                    if alias_id and alias_id >= id_offset:
+                        raw_id = alias_id - id_offset
+                        if raw_id not in existing_ids:
+                            cur.execute(
+                                """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                          fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                          sodium_mg_per_100g, tags, notes
+                                   FROM custom_foods WHERE id = %s""",
+                                (raw_id,)
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                existing_ids.add(row['id'])
+                                candidates.append(dict(row))
+
+                    # 3. Check notes for keyword matches (e.g. for "proteína em pó")
+                    if words:
+                        cur.execute(
+                            """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                      fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                      sodium_mg_per_100g, tags, notes
+                               FROM custom_foods"""
+                        )
+                        for row in cur.fetchall():
+                            if row['id'] in existing_ids:
+                                continue
+                            notes_clean = remove_accents((row['notes'] or '').lower())
+                            if all(w in notes_clean for w in words):
+                                existing_ids.add(row['id'])
+                                candidates.append(dict(row))
+            else:
+                self._init_custom_foods_table()
+                # 1. Search via FTS
+                cursor = conn.execute(
+                    """SELECT custom_foods.id, custom_foods.name, custom_foods.category,
+                              custom_foods.kcal_per_100g, custom_foods.protein_g_per_100g,
+                              custom_foods.fat_g_per_100g, custom_foods.carbs_g_per_100g,
+                              custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g,
+                              custom_foods.tags, custom_foods.notes
+                       FROM custom_foods_fts
+                       JOIN custom_foods ON custom_foods_fts.rowid = custom_foods.id
+                       WHERE custom_foods_fts MATCH ?""",
+                    (normalized,)
+                )
+                for row in cursor:
+                    candidates.append(dict(row))
+
+                existing_ids = {r['id'] for r in candidates}
+
+                # 2. Check aliases
+                alias_id = self._aliases.get(normalized.lower())
+                if alias_id and alias_id >= id_offset:
+                    raw_id = alias_id - id_offset
+                    if raw_id not in existing_ids:
+                        cur_alias = conn.execute(
+                            """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
+                                      fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
+                                      sodium_mg_per_100g, tags, notes
+                               FROM custom_foods WHERE id = ?""",
+                            (raw_id,)
+                        )
+                        row = cur_alias.fetchone()
+                        if row:
+                            existing_ids.add(row['id'])
+                            candidates.append(dict(row))
+
+                # 3. Check notes for keyword matches
+                words = [w for w in normalized.split() if len(w) >= 2]
+                if words:
+                    cur_notes = conn.execute(
                         """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
                                   fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
                                   sodium_mg_per_100g, tags, notes
-                           FROM custom_foods WHERE id = ?""",
-                        (raw_id,)
+                           FROM custom_foods"""
                     )
-                    row = cur_alias.fetchone()
-                    if row:
-                        existing_ids.add(row['id'])
-                        candidates.append(dict(row))
-
-            # 3. Check notes for keyword matches (e.g. for "proteína em pó")
-            words = [w for w in normalized.split() if len(w) >= 2]
-            if words:
-                cur_notes = conn.execute(
-                    """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
-                              fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
-                              sodium_mg_per_100g, tags, notes
-                       FROM custom_foods"""
-                )
-                for row in cur_notes:
-                    if row['id'] in existing_ids:
-                        continue
-                    notes_clean = remove_accents((row['notes'] or '').lower())
-                    if all(w in notes_clean for w in words):
-                        existing_ids.add(row['id'])
-                        candidates.append(dict(row))
+                    for row in cur_notes:
+                        if row['id'] in existing_ids:
+                            continue
+                        notes_clean = remove_accents((row['notes'] or '').lower())
+                        if all(w in notes_clean for w in words):
+                            existing_ids.add(row['id'])
+                            candidates.append(dict(row))
         finally:
             conn.close()
 
         # Filter and rank brand items
         filtered: List[tuple[int, dict]] = []
         for c in candidates:
-            tags_json = c.get('tags', '[]')
-            try:
-                tags = json.loads(tags_json) if tags_json else []
-            except Exception:
+            tags_val = c.get('tags', '[]')
+            if isinstance(tags_val, str):
+                try:
+                    tags = json.loads(tags_val) if tags_val else []
+                except Exception:
+                    tags = []
+            elif isinstance(tags_val, list):
+                tags = tags_val
+            else:
                 tags = []
-            
+
             is_brand_ref = any("marca" in str(t).lower() for t in tags)
             if is_brand_ref:
-                # Must cite brand to appear
                 brand_tokens = set()
                 for t in tags:
                     t_str = str(t).lower().strip()
                     if t_str.startswith("marca:"):
                         brand_tokens.update(remove_accents(t_str[6:].strip()).split())
-                
+
                 name_norm = remove_accents(c['name'].lower())
                 generic_words = {
                     "whey", "protein", "concentrado", "isolado", "isolate", "po",
@@ -735,11 +1112,11 @@ class TacoDB:
                         if w.startswith("integral"):
                             brand_tokens.add("integral")
                             brand_tokens.add("integralmedica")
-                
+
                 q_words = set(re.findall(r"\b[a-z0-9]+\b", normalized))
                 brand_cited = any(bt in q_words or bt in normalized for bt in brand_tokens)
                 if not brand_cited:
-                    continue  # Skip branded item when brand not cited
+                    continue
                 filtered.append((1, c))
             else:
                 filtered.append((0, c))

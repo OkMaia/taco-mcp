@@ -37,6 +37,11 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Environment variables
+.env
+.env.*
+!.env.example
+
 # Database (large files)
 # Note: We include data/processed/taco.sqlite (~650KB) in the repo
 *.sqlite3

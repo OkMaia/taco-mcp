@@ -79,6 +79,15 @@ def test_http_mode_only_lists_read_only_tools():
     }
 
 
+def test_tools_listed_when_read_only_disabled(monkeypatch):
+    monkeypatch.setenv("TACO_MCP_READ_ONLY", "0")
+    tools = asyncio.run(list_tools())
+    tool_names = {tool.name for tool in tools}
+    assert "add_custom_food" in tool_names
+    assert "list_custom_foods" in tool_names
+    assert "delete_custom_food" in tool_names
+
+
 def test_mcp_call_fit_meals_via_http(client: TestClient):
     # Call tools/call for fit_meals
     response = client.post(

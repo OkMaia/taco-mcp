@@ -17,9 +17,13 @@ from starlette.types import Receive, Scope, Send
 
 from .server import app as mcp_server
 
-# The remote deployment is intentionally read-only. The stdio entrypoint keeps
-# its existing behavior because this setting only applies in this process.
-os.environ["TACO_MCP_READ_ONLY"] = "1"
+# In HTTP mode, default to read-only ONLY if DATABASE_URL is not configured.
+# When DATABASE_URL is present, we have persistent PostgreSQL storage and can safely write!
+if "TACO_MCP_READ_ONLY" not in os.environ:
+    if os.getenv("DATABASE_URL"):
+        os.environ["TACO_MCP_READ_ONLY"] = "0"
+    else:
+        os.environ["TACO_MCP_READ_ONLY"] = "1"
 
 
 def _csv_env(name: str, default: str = "") -> list[str]:
