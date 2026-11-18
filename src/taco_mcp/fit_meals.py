@@ -10,7 +10,13 @@ from typing import Any, List, Optional, Tuple, Union
 import yaml
 
 from .db import TacoDB
-from .normalize import normalize_query
+from .normalize import (
+    extract_prep,
+    get_prep_variants,
+    normalize_query,
+    remove_accents,
+    PREP_STATES,
+)
 from .schemas import (
     FitDeviation,
     FitMealItemInput,
@@ -610,77 +616,105 @@ def get_substitutes_for_item(
     return [x["substitute"] for x in evaluated[:4]]
 
 
-PREP_STATES = {
-    "cru": "cru", "crua": "cru", "crus": "cru", "cruas": "cru",
-    "cozido": "cozido", "cozida": "cozido", "cozidos": "cozido", "cozidas": "cozido",
-    "grelhado": "grelhado", "grelhada": "grelhado", "grelhados": "grelhado", "grelhadas": "grelhado",
-    "assado": "assado", "assada": "assado", "assados": "assado", "assadas": "assado",
-    "frito": "frito", "frita": "frito", "fritos": "frito", "fritas": "frito",
-    "refogado": "refogado", "refogada": "refogado", "refogados": "refogado", "refogadas": "refogado",
-    "vapor": "vapor",
-    "po": "po", "pó": "po",
-}
-
-
-def extract_prep(text: str) -> tuple[Optional[str], Optional[str]]:
-    """Extract raw and canonical preparation state from text."""
-    from .normalize import remove_accents
-    text_clean = remove_accents(text.lower())
-    tokens = re.findall(r"\b[a-z]+\b", text_clean)
-    for t in tokens:
-        if t in PREP_STATES:
-            return t, PREP_STATES[t]
-    return None, None
-
-
 def get_alternatives(db: TacoDB, requested_name: str, chosen_food_id: int) -> list[str]:
     """Find up to 3 close alternative food names in TACO database."""
-    from .normalize import remove_accents
     req_clean = remove_accents(requested_name.lower().strip())
     weak_words = {'de', 'com', 'sem', 'tipo', 'pronto', 'a', 'o', 'e', 'da', 'do', 'em'}
     tokens = [w for w in re.findall(r"\b[a-z]+\b", req_clean) if w not in weak_words]
     alts: list[str] = []
 
-    conn = db._get_connection()
     try:
-        search_words = [w for w in tokens if len(w) >= 3 and w not in PREP_STATES]
-        if search_words:
-            fts_q = " OR ".join(search_words)
-            cursor = conn.execute(
-                """SELECT foods.id, foods.description
-                   FROM foods_fts
-                   JOIN foods ON foods_fts.rowid = foods.id
-                   WHERE foods_fts MATCH ?
-                   ORDER BY rank
-                   LIMIT 6""",
-                (fts_q,),
-            )
-            for row in cursor.fetchall():
-                if row[0] != chosen_food_id and row[1] not in alts:
-                    alts.append(row[1])
+        conn = db._get_connection()
+        try:
+            search_words = [w for w in tokens if len(w) >= 3 and w not in PREP_STATES]
+            if db.is_postgres:
+                with conn.cursor() as cur:
+                    if search_words:
+                        cond_parts = []
+                        cond_params = []
+                        for w in search_words:
+                            variants = get_prep_variants(w)
+                            if len(variants) > 1:
+                                cond_parts.append("(" + " OR ".join(["description_normalized ILIKE %s" for _ in variants]) + ")")
+                                cond_params.extend([f"%{v}%" for v in variants])
+                            else:
+                                cond_parts.append("description_normalized ILIKE %s")
+                                cond_params.append(f"%{w}%")
+                        conds = " OR ".join(cond_parts)
+                        cur.execute(
+                            f"""SELECT id, description FROM foods
+                               WHERE ({conds}) AND id != %s
+                               LIMIT 6""",
+                            cond_params + [chosen_food_id],
+                        )
+                        for row in cur.fetchall():
+                            r_id = row["id"]
+                            r_desc = row["description"]
+                            if r_id != chosen_food_id and r_desc not in alts:
+                                alts.append(r_desc)
 
-        chosen = db.get_food(chosen_food_id)
-        if len(alts) < 3 and chosen and chosen.category:
-            cursor = conn.execute(
-                """SELECT id, description FROM foods
-                   WHERE category = ? AND id != ?
-                   LIMIT 6""",
-                (chosen.category, chosen_food_id),
-            )
-            for row in cursor.fetchall():
-                if row[0] != chosen_food_id and row[1] not in alts:
-                    alts.append(row[1])
-                if len(alts) >= 3:
-                    break
-    finally:
-        conn.close()
+                    chosen = db.get_food(chosen_food_id)
+                    if len(alts) < 3 and chosen and chosen.category:
+                        cur.execute(
+                            """SELECT id, description FROM foods
+                               WHERE category = %s AND id != %s
+                               LIMIT 6""",
+                            (chosen.category, chosen_food_id),
+                        )
+                        for row in cur.fetchall():
+                            r_id = row["id"]
+                            r_desc = row["description"]
+                            if r_id != chosen_food_id and r_desc not in alts:
+                                alts.append(r_desc)
+                            if len(alts) >= 3:
+                                break
+            else:
+                if search_words:
+                    fts_q = " OR ".join(search_words)
+                    cursor = conn.execute(
+                        """SELECT foods.id, foods.description
+                           FROM foods_fts
+                           JOIN foods ON foods_fts.rowid = foods.id
+                           WHERE foods_fts MATCH ?
+                           ORDER BY rank
+                           LIMIT 6""",
+                        (fts_q,),
+                    )
+                    for row in cursor.fetchall():
+                        r_id = row["id"] if hasattr(row, "keys") else row[0]
+                        r_desc = row["description"] if hasattr(row, "keys") else row[1]
+                        if r_id != chosen_food_id and r_desc not in alts:
+                            alts.append(r_desc)
+
+                chosen = db.get_food(chosen_food_id)
+                if len(alts) < 3 and chosen and chosen.category:
+                    cursor = conn.execute(
+                        """SELECT id, description FROM foods
+                           WHERE category = ? AND id != ?
+                           LIMIT 6""",
+                        (chosen.category, chosen_food_id),
+                    )
+                    for row in cursor.fetchall():
+                        r_id = row["id"] if hasattr(row, "keys") else row[0]
+                        r_desc = row["description"] if hasattr(row, "keys") else row[1]
+                        if r_id != chosen_food_id and r_desc not in alts:
+                            alts.append(r_desc)
+                        if len(alts) >= 3:
+                            break
+        finally:
+            conn.close()
+    except Exception:
+        pass
 
     if len(alts) < 3:
-        for sugg in find_suggestions(db, requested_name):
-            if sugg not in alts:
-                alts.append(sugg)
-            if len(alts) >= 3:
-                break
+        try:
+            for sugg in find_suggestions(db, requested_name):
+                if sugg not in alts:
+                    alts.append(sugg)
+                if len(alts) >= 3:
+                    break
+        except Exception:
+            pass
 
     return alts[:3]
 
@@ -698,7 +732,6 @@ def check_exact_match(
     if isinstance(requested, int) or (isinstance(requested, str) and requested.strip().isdigit()):
         return True, None, None
 
-    from .normalize import remove_accents
     req_str = str(requested).strip()
     req_clean = remove_accents(req_str.lower())
     res_clean = remove_accents(resolved_name.lower())
@@ -732,7 +765,10 @@ def check_exact_match(
         else:
             match_note = prep_note
 
-        alternatives = get_alternatives(db, req_str, resolved_id)
+        try:
+            alternatives = get_alternatives(db, req_str, resolved_id)
+        except Exception:
+            alternatives = None
 
     return exact_match, match_note, alternatives
 
@@ -746,22 +782,43 @@ def find_suggestions(db: TacoDB, query: str) -> list[str]:
 
     suggestions: list[str] = []
 
-    # 1. Try words in foods_fts
+    # 1. Try words in database
     if words:
-        fts_q = " OR ".join(words)
         try:
             conn = db._get_connection()
             try:
-                cursor = conn.execute(
-                    """SELECT foods.description
-                       FROM foods_fts
-                       JOIN foods ON foods_fts.rowid = foods.id
-                       WHERE foods_fts MATCH ?
-                       ORDER BY rank
-                       LIMIT 3""",
-                    (fts_q,),
-                )
-                suggestions = [r[0] for r in cursor.fetchall()]
+                if db.is_postgres:
+                    with conn.cursor() as cur:
+                        cond_parts = []
+                        params = []
+                        for w in words:
+                            variants = get_prep_variants(w)
+                            if len(variants) > 1:
+                                cond_parts.append("(" + " OR ".join(["description_normalized ILIKE %s" for _ in variants]) + ")")
+                                params.extend([f"%{v}%" for v in variants])
+                            else:
+                                cond_parts.append("description_normalized ILIKE %s")
+                                params.append(f"%{w}%")
+                        conds = " OR ".join(cond_parts)
+                        cur.execute(
+                            f"""SELECT description FROM foods
+                               WHERE {conds}
+                               LIMIT 3""",
+                            params,
+                        )
+                        suggestions = [r["description"] for r in cur.fetchall()]
+                else:
+                    fts_q = " OR ".join(words)
+                    cursor = conn.execute(
+                        """SELECT foods.description
+                           FROM foods_fts
+                           JOIN foods ON foods_fts.rowid = foods.id
+                           WHERE foods_fts MATCH ?
+                           ORDER BY rank
+                           LIMIT 3""",
+                        (fts_q,),
+                    )
+                    suggestions = [r["description"] if hasattr(r, "keys") else r[0] for r in cursor.fetchall()]
             finally:
                 conn.close()
         except Exception:
@@ -770,12 +827,27 @@ def find_suggestions(db: TacoDB, query: str) -> list[str]:
     if suggestions:
         return suggestions[:3]
 
-    # 2. Try difflib against all food descriptions
+    # 2. Try difflib against all food descriptions (including custom foods)
     try:
         conn = db._get_connection()
         try:
-            cursor = conn.execute("SELECT description FROM foods")
-            all_desc = [r[0] for r in cursor.fetchall()]
+            if db.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT description FROM foods")
+                    all_desc = [r["description"] for r in cur.fetchall()]
+                    try:
+                        cur.execute("SELECT name FROM custom_foods")
+                        all_desc.extend([r["name"] for r in cur.fetchall()])
+                    except Exception:
+                        pass
+            else:
+                cursor = conn.execute("SELECT description FROM foods")
+                all_desc = [r["description"] if hasattr(r, "keys") else r[0] for r in cursor.fetchall()]
+                try:
+                    custom_cur = conn.execute("SELECT name FROM custom_foods")
+                    all_desc.extend([r["name"] if hasattr(r, "keys") else r[0] for r in custom_cur.fetchall()])
+                except Exception:
+                    pass
             close_matches = difflib.get_close_matches(query, all_desc, n=3, cutoff=0.2)
             if close_matches:
                 return close_matches
@@ -822,7 +894,7 @@ def resolve_food(
         if food_obj:
             return (food_obj.food_id, food_obj.description, food_obj.per_100g, food_str, [])
 
-    # 2. Search database with search_food (FTS5) using cleaned query
+    # 2. Search database with search_food and search_custom_foods
     try:
         search_res = db.search_food(clean_food_str, limit=5)
         if search_res.results:
@@ -839,26 +911,49 @@ def resolve_food(
     raw_words = [re.sub(r"[^\w]", "", w) for w in norm.split()]
     words = [w for w in raw_words if len(w) >= 3]
     if words:
-        fts_q = " OR ".join(words)
+        non_prep_words = [w for w in words if w not in PREP_STATES]
+        search_words = non_prep_words if non_prep_words else words
         try:
             conn = db._get_connection()
             try:
-                cursor = conn.execute(
-                    """SELECT foods.id, foods.description, foods.kcal_per_100g,
-                              foods.protein_g_per_100g, foods.fat_g_per_100g,
-                              foods.carbs_g_per_100g, foods.fiber_g_per_100g,
-                              foods.sodium_mg_per_100g
-                       FROM foods_fts
-                       JOIN foods ON foods_fts.rowid = foods.id
-                       WHERE foods_fts MATCH ?
-                       ORDER BY rank
-                       LIMIT 1""",
-                    (fts_q,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    macros = db._row_to_macros(row)
-                    return (row["id"], row["description"], macros, food_str, [])
+                if db.is_postgres:
+                    with conn.cursor() as cur:
+                        conds = " OR ".join(["description_normalized ILIKE %s" for _ in search_words])
+                        params = [f"%{w}%" for w in search_words]
+                        cur.execute(
+                            f"""SELECT id, description, kcal_per_100g,
+                                      protein_g_per_100g, fat_g_per_100g,
+                                      carbs_g_per_100g, fiber_g_per_100g,
+                                      sodium_mg_per_100g
+                               FROM foods
+                               WHERE {conds}
+                               LIMIT 1""",
+                            params,
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            macros = db._row_to_macros(row)
+                            return (row["id"], row["description"], macros, food_str, [])
+                else:
+                    fts_q = " OR ".join(search_words)
+                    cursor = conn.execute(
+                        """SELECT foods.id, foods.description, foods.kcal_per_100g,
+                                  foods.protein_g_per_100g, foods.fat_g_per_100g,
+                                  foods.carbs_g_per_100g, foods.fiber_g_per_100g,
+                                  foods.sodium_mg_per_100g
+                           FROM foods_fts
+                           JOIN foods ON foods_fts.rowid = foods.id
+                           WHERE foods_fts MATCH ?
+                           ORDER BY rank
+                           LIMIT 1""",
+                        (fts_q,),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        macros = db._row_to_macros(row)
+                        r_id = row["id"] if hasattr(row, "keys") else row[0]
+                        r_desc = row["description"] if hasattr(row, "keys") else row[1]
+                        return (r_id, r_desc, macros, food_str, [])
             finally:
                 conn.close()
         except Exception:
@@ -984,6 +1079,7 @@ def solve_meal_option(
                 feasible=False,
                 message=msg,
                 suggestions=suggestions or None,
+                alternatives=suggestions or None,
             )
 
         exact_match, match_note, alternatives = check_exact_match(

@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 import yaml
 
-from .normalize import normalize_query, parse_br_number, remove_accents, round_macro
+from .normalize import (
+    extract_prep,
+    get_prep_variants,
+    normalize_query,
+    parse_br_number,
+    remove_accents,
+    round_macro,
+    PREP_STATES,
+)
 from .schemas import (
     CalculateMacrosOutput, CalculatedMacros,
     CalculateMealMacrosOutput, GetFoodOutput,
@@ -271,8 +279,17 @@ class TacoDB:
                     if len(results) < limit:
                         words = [w for w in normalized.split() if w]
                         if words:
-                            conditions = " AND ".join(["description_normalized ILIKE %s" for _ in words])
-                            params = [f"%{w}%" for w in words]
+                            cond_parts = []
+                            cond_params = []
+                            for w in words:
+                                variants = get_prep_variants(w)
+                                if len(variants) > 1:
+                                    cond_parts.append("(" + " OR ".join(["description_normalized ILIKE %s" for _ in variants]) + ")")
+                                    cond_params.extend([f"%{v}%" for v in variants])
+                                else:
+                                    cond_parts.append("description_normalized ILIKE %s")
+                                    cond_params.append(f"%{w}%")
+                            conditions = " AND ".join(cond_parts)
                             sql = f"""
                                 SELECT id, source_id, category, description,
                                        kcal_per_100g, protein_g_per_100g, fat_g_per_100g,
@@ -284,7 +301,7 @@ class TacoDB:
                                          sim DESC, id ASC
                                 LIMIT %s
                             """
-                            cur.execute(sql, [normalized] + params + [f"{normalized}%", limit - len(results)])
+                            cur.execute(sql, [normalized] + cond_params + [f"{normalized}%", limit - len(results)])
                             for row in cur.fetchall():
                                 if any(r.food_id == row['id'] for r in results):
                                     continue
@@ -319,6 +336,15 @@ class TacoDB:
                         ))
 
                 if len(results) < limit:
+                    words = [w for w in normalized.split() if w]
+                    fts_parts = []
+                    for w in words:
+                        variants = get_prep_variants(w)
+                        if len(variants) > 1:
+                            fts_parts.append("(" + " OR ".join(variants) + ")")
+                        else:
+                            fts_parts.append(w)
+                    fts_query = " AND ".join(fts_parts) if fts_parts else normalized
                     cursor = conn.execute(
                         """SELECT foods.id, foods.source_id, foods.category, foods.description,
                                   foods.kcal_per_100g, foods.protein_g_per_100g, foods.fat_g_per_100g,
@@ -329,7 +355,7 @@ class TacoDB:
                            WHERE foods_fts MATCH ?
                            ORDER BY rank
                            LIMIT ?""",
-                        (normalized, limit - len(results))
+                        (fts_query, limit - len(results))
                     )
                     for row in cursor:
                         if any(r.food_id == row['id'] for r in results):
@@ -969,26 +995,38 @@ class TacoDB:
         """Search custom foods."""
         normalized = normalize_query(query)
         candidates: List[dict] = []
+        req_prep_raw, req_prep_canon = extract_prep(query)
 
         conn = self._get_connection()
         try:
             if self.is_postgres:
                 with conn.cursor() as cur:
                     words = [w for w in normalized.split() if len(w) >= 2]
-                    # 1. Search via name_normalized
+                    # 1. Search via name_normalized with prep state variants
                     if words:
-                        conditions = " AND ".join(["name_normalized ILIKE %s" for _ in words])
-                        params = [f"%{w}%" for w in words]
+                        cond_parts = []
+                        cond_params = []
+                        for w in words:
+                            variants = get_prep_variants(w)
+                            if len(variants) > 1:
+                                cond_parts.append("(" + " OR ".join(["name_normalized ILIKE %s" for _ in variants]) + ")")
+                                cond_params.extend([f"%{v}%" for v in variants])
+                            else:
+                                cond_parts.append("name_normalized ILIKE %s")
+                                cond_params.append(f"%{w}%")
+                        conditions = " AND ".join(cond_parts)
                         cur.execute(
                             f"""SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
                                       fat_g_per_100g, carbs_g_per_100g, fiber_g_per_100g,
                                       sodium_mg_per_100g, tags, notes
                                FROM custom_foods
                                WHERE {conditions}""",
-                            params
+                            cond_params
                         )
                         for row in cur.fetchall():
-                            candidates.append(dict(row))
+                            d = dict(row)
+                            d["_source"] = "name"
+                            candidates.append(d)
 
                     existing_ids = {r['id'] for r in candidates}
 
@@ -1006,10 +1044,12 @@ class TacoDB:
                             )
                             row = cur.fetchone()
                             if row:
-                                existing_ids.add(row['id'])
-                                candidates.append(dict(row))
+                                d = dict(row)
+                                d["_source"] = "alias"
+                                existing_ids.add(d['id'])
+                                candidates.append(d)
 
-                    # 3. Check notes for keyword matches (e.g. for "proteína em pó")
+                    # 3. Check notes for alias matches or keyword matches
                     if words:
                         cur.execute(
                             """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
@@ -1020,26 +1060,64 @@ class TacoDB:
                         for row in cur.fetchall():
                             if row['id'] in existing_ids:
                                 continue
-                            notes_clean = remove_accents((row['notes'] or '').lower())
-                            if all(w in notes_clean for w in words):
-                                existing_ids.add(row['id'])
-                                candidates.append(dict(row))
+                            notes_raw = row['notes'] or ''
+                            notes_clean = remove_accents(notes_raw.lower())
+                            alias_match = False
+                            m = re.search(r"aliases:\s*([^.\n]+)", notes_clean)
+                            if m:
+                                alias_list = [a.strip() for a in m.group(1).split(",")]
+                                q_clean = remove_accents(query.lower().strip())
+                                if any(a == normalized or a == q_clean for a in alias_list):
+                                    alias_match = True
+
+                            if alias_match:
+                                d = dict(row)
+                                d["_source"] = "alias"
+                                existing_ids.add(d['id'])
+                                candidates.append(d)
+                            else:
+                                word_matched = True
+                                for w in words:
+                                    variants = get_prep_variants(w)
+                                    if not any(v in notes_clean for v in variants):
+                                        word_matched = False
+                                        break
+                                if word_matched:
+                                    d = dict(row)
+                                    d["_source"] = "notes"
+                                    existing_ids.add(d['id'])
+                                    candidates.append(d)
             else:
                 self._init_custom_foods_table()
+                words = [w for w in normalized.split() if len(w) >= 2]
                 # 1. Search via FTS
-                cursor = conn.execute(
-                    """SELECT custom_foods.id, custom_foods.name, custom_foods.category,
-                              custom_foods.kcal_per_100g, custom_foods.protein_g_per_100g,
-                              custom_foods.fat_g_per_100g, custom_foods.carbs_g_per_100g,
-                              custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g,
-                              custom_foods.tags, custom_foods.notes
-                       FROM custom_foods_fts
-                       JOIN custom_foods ON custom_foods_fts.rowid = custom_foods.id
-                       WHERE custom_foods_fts MATCH ?""",
-                    (normalized,)
-                )
-                for row in cursor:
-                    candidates.append(dict(row))
+                if words:
+                    fts_parts = []
+                    for w in words:
+                        variants = get_prep_variants(w)
+                        if len(variants) > 1:
+                            fts_parts.append("(" + " OR ".join(variants) + ")")
+                        else:
+                            fts_parts.append(w)
+                    fts_query = " AND ".join(fts_parts)
+                    try:
+                        cursor = conn.execute(
+                            """SELECT custom_foods.id, custom_foods.name, custom_foods.category,
+                                      custom_foods.kcal_per_100g, custom_foods.protein_g_per_100g,
+                                      custom_foods.fat_g_per_100g, custom_foods.carbs_g_per_100g,
+                                      custom_foods.fiber_g_per_100g, custom_foods.sodium_mg_per_100g,
+                                      custom_foods.tags, custom_foods.notes
+                               FROM custom_foods_fts
+                               JOIN custom_foods ON custom_foods_fts.rowid = custom_foods.id
+                               WHERE custom_foods_fts MATCH ?""",
+                            (fts_query,)
+                        )
+                        for row in cursor:
+                            d = dict(row)
+                            d["_source"] = "name"
+                            candidates.append(d)
+                    except Exception:
+                        pass
 
                 existing_ids = {r['id'] for r in candidates}
 
@@ -1057,11 +1135,12 @@ class TacoDB:
                         )
                         row = cur_alias.fetchone()
                         if row:
-                            existing_ids.add(row['id'])
-                            candidates.append(dict(row))
+                            d = dict(row)
+                            d["_source"] = "alias"
+                            existing_ids.add(d['id'])
+                            candidates.append(d)
 
-                # 3. Check notes for keyword matches
-                words = [w for w in normalized.split() if len(w) >= 2]
+                # 3. Check notes for alias matches or keyword matches
                 if words:
                     cur_notes = conn.execute(
                         """SELECT id, name, category, kcal_per_100g, protein_g_per_100g,
@@ -1072,15 +1151,38 @@ class TacoDB:
                     for row in cur_notes:
                         if row['id'] in existing_ids:
                             continue
-                        notes_clean = remove_accents((row['notes'] or '').lower())
-                        if all(w in notes_clean for w in words):
-                            existing_ids.add(row['id'])
-                            candidates.append(dict(row))
+                        notes_raw = row['notes'] or ''
+                        notes_clean = remove_accents(notes_raw.lower())
+                        alias_match = False
+                        m = re.search(r"aliases:\s*([^.\n]+)", notes_clean)
+                        if m:
+                            alias_list = [a.strip() for a in m.group(1).split(",")]
+                            q_clean = remove_accents(query.lower().strip())
+                            if any(a == normalized or a == q_clean for a in alias_list):
+                                alias_match = True
+
+                        if alias_match:
+                            d = dict(row)
+                            d["_source"] = "alias"
+                            existing_ids.add(d['id'])
+                            candidates.append(d)
+                        else:
+                            word_matched = True
+                            for w in words:
+                                variants = get_prep_variants(w)
+                                if not any(v in notes_clean for v in variants):
+                                    word_matched = False
+                                    break
+                            if word_matched:
+                                d = dict(row)
+                                d["_source"] = "notes"
+                                existing_ids.add(d['id'])
+                                candidates.append(d)
         finally:
             conn.close()
 
-        # Filter and rank brand items
-        filtered: List[tuple[int, dict]] = []
+        # Filter and rank items by: (brand_priority, prep_penalty, source_priority, id)
+        scored: List[tuple[tuple, dict]] = []
         for c in candidates:
             tags_val = c.get('tags', '[]')
             if isinstance(tags_val, str):
@@ -1094,6 +1196,7 @@ class TacoDB:
                 tags = []
 
             is_brand_ref = any("marca" in str(t).lower() for t in tags)
+            brand_priority = 0
             if is_brand_ref:
                 brand_tokens = set()
                 for t in tags:
@@ -1117,15 +1220,31 @@ class TacoDB:
                 brand_cited = any(bt in q_words or bt in normalized for bt in brand_tokens)
                 if not brand_cited:
                     continue
-                filtered.append((1, c))
-            else:
-                filtered.append((0, c))
+                brand_priority = 1
+
+            # Preparation penalty: if query requested a prep state, prioritize candidates with matching prep state
+            prep_penalty = 0
+            if req_prep_canon is not None:
+                _, cand_prep_canon = extract_prep(c['name'])
+                if cand_prep_canon == req_prep_canon:
+                    prep_penalty = 0
+                elif cand_prep_canon is None:
+                    prep_penalty = 1
+                else:
+                    prep_penalty = 2
+
+            # Source priority: alias (0) > name (1) > notes keyword (2)
+            src = c.get("_source")
+            source_priority = 0 if src == "alias" else (1 if src == "name" else 2)
+
+            score = (brand_priority, prep_penalty, source_priority, c['id'])
+            scored.append((score, c))
 
         # Sort: priority 0 (generic) first, then priority 1 (brand)
-        filtered.sort(key=lambda x: x[0])
+        scored.sort(key=lambda x: x[0])
 
         results: List[FoodResult] = []
-        for _, row in filtered[:limit]:
+        for _, row in scored[:limit]:
             results.append(FoodResult(
                 food_id=row['id'] + id_offset,
                 description=row['name'],

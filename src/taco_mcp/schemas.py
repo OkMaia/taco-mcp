@@ -227,6 +227,7 @@ class FitMealOptionResult(BaseModel):
     within_tolerance: FitWithinTolerance = FitWithinTolerance()
     message: Optional[str] = None
     suggestions: Optional[List[str]] = None
+    alternatives: Optional[List[str]] = None
 
 
 class FitMealsOutput(BaseModel):

@@ -96,3 +96,91 @@ def test_pg_add_and_retrieve_custom_food(pg_db):
 
         # Verify it's deleted
         assert pg_db.get_food(food_id) is None
+
+
+def test_pg_fit_meals_tilapia_cozida(pg_db):
+    """Test that 'tilápia cozida' resolves properly to custom food (id 100123) without SQL errors."""
+    from taco_mcp.fit_meals import fit_meals
+
+    args = {
+        "meals": [
+            {
+                "id": "teste_tilapia",
+                "target": {"kcal": 268.8, "protein_g": 41.9, "carb_g": 13.3, "fat_g": 5.3},
+                "items": [
+                    {"food": "tilápia cozida", "role": "protein", "min_g": 100},
+                    {"food": "arroz cozido", "role": "carb"},
+                    {"food": "couve-flor cozida", "role": "veg"},
+                ],
+            }
+        ]
+    }
+    out = fit_meals(pg_db, args)
+    assert len(out.results) == 1
+    res = out.results[0]
+    assert res.feasible is True
+    assert res.items[0].food_id == 100123
+    assert res.items[0].exact_match is True
+    assert "Tilápia" in res.items[0].name
+    assert "cozido" in res.items[0].name.lower()
+
+
+def test_pg_fit_meals_cozido_variants(pg_db):
+    """Test other 'cozido/cozida' items on PostgreSQL."""
+    from taco_mcp.fit_meals import fit_meals
+
+    # 1. Frango cozido (official food via alias)
+    args_frango = {
+        "meals": [
+            {
+                "id": "teste_frango",
+                "target": {"kcal": 268.8, "protein_g": 41.9, "carb_g": 13.3, "fat_g": 5.3},
+                "items": [
+                    {"food": "frango cozido", "role": "protein", "min_g": 100},
+                    {"food": "arroz cozido", "role": "carb"},
+                    {"food": "couve-flor cozida", "role": "veg"},
+                ],
+            }
+        ]
+    }
+    res_frango = fit_meals(pg_db, args_frango).results[0]
+    assert res_frango.feasible is True
+    assert "Frango" in res_frango.items[0].name
+
+    # 2. Merluza cozida (official TACO has assado/frito, not cozido; returns alternative without SQL error)
+    args_merluza = {
+        "meals": [
+            {
+                "id": "teste_merluza",
+                "target": {"kcal": 268.8, "protein_g": 41.9, "carb_g": 13.3, "fat_g": 5.3},
+                "items": [
+                    {"food": "merluza cozida", "role": "protein", "min_g": 100},
+                    {"food": "arroz cozido", "role": "carb"},
+                    {"food": "couve-flor cozida", "role": "veg"},
+                ],
+            }
+        ]
+    }
+    res_merluza = fit_meals(pg_db, args_merluza).results[0]
+    # Should resolve without SQL exception
+    assert res_merluza.items[0].exact_match is False
+    assert res_merluza.items[0].alternatives is not None
+    assert len(res_merluza.items[0].alternatives) > 0
+
+    # 3. Completely unknown food returns feasible: false with alternatives and suggestions
+    args_unknown = {
+        "meals": [
+            {
+                "id": "teste_unknown",
+                "target": {"kcal": 268.8, "protein_g": 41.9, "carb_g": 13.3, "fat_g": 5.3},
+                "items": [
+                    {"food": "alimento_totalmente_inexistente_12345", "role": "protein"},
+                ],
+            }
+        ]
+    }
+    res_unknown = fit_meals(pg_db, args_unknown).results[0]
+    assert res_unknown.feasible is False
+    assert "não encontrado" in res_unknown.message
+    assert "Erro de validação ou processamento" not in res_unknown.message
+

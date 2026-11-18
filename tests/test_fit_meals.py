@@ -1241,3 +1241,28 @@ def test_fit_meals_with_custom_whey():
     assert whey_item.household.unit == "dose"
 
 
+def test_fit_meals_unknown_food_returns_alternatives():
+    """Test that unknown foods return feasible: false, message, suggestions, and alternatives without SQL error."""
+    db = get_db()
+    args = {
+        "meals": [
+            {
+                "id": "teste_inexistente",
+                "target": {"kcal": 300, "protein_g": 30, "carb_g": 20, "fat_g": 5},
+                "items": [
+                    {"food": "comida_totalmente_inexistente_99999", "role": "protein"},
+                ],
+            }
+        ]
+    }
+    out = fit_meals(db, args)
+    assert len(out.results) == 1
+    res = out.results[0]
+    assert res.feasible is False
+    assert "não encontrado" in res.message
+    assert "Erro de validação ou processamento" not in res.message
+    # Suggestions and alternatives are present
+    assert res.suggestions is not None or res.alternatives is not None
+
+
+
