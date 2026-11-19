@@ -224,7 +224,7 @@ class FitMealOptionResult(BaseModel):
     items: List[FitMealItemResult] = []
     totals: FitTotals = FitTotals()
     deviation: Optional[FitDeviation] = None
-    within_tolerance: FitWithinTolerance = FitWithinTolerance()
+    within_tolerance: Optional[FitWithinTolerance] = None
     message: Optional[str] = None
     suggestions: Optional[List[str]] = None
     alternatives: Optional[List[str]] = None

@@ -10,6 +10,7 @@ from taco_mcp.fit_meals import (
     DEFAULT_TOLERANCE,
     ROLE_DEFAULTS,
     calculate_household_measure,
+    check_exact_match,
     fit_meals,
     load_household_measures,
     resolve_food,
@@ -125,34 +126,10 @@ def test_simple_breakfast_meal_properties():
     assert res.totals.carb_g == pytest.approx(round(expected_c, 2), abs=0.01)
     assert res.totals.fat_g == pytest.approx(round(expected_f, 2), abs=0.01)
 
-    # Check deviation calculation
-    target = args["meals"][0]["target"]
-    tol = args["meals"][0]["tolerance"]
-
-    exp_kcal_pct = round(((res.totals.kcal - target["kcal"]) / target["kcal"]) * 100.0, 1)
-    exp_p_dev = round(res.totals.protein_g - target["protein_g"], 2)
-    exp_c_dev = round(res.totals.carb_g - target["carb_g"], 2)
-    exp_f_dev = round(res.totals.fat_g - target["fat_g"], 2)
-
-    assert res.deviation.kcal_pct == pytest.approx(exp_kcal_pct, abs=0.1)
-    assert res.deviation.protein_g == pytest.approx(exp_p_dev, abs=0.01)
-    assert res.deviation.carb_g == pytest.approx(exp_c_dev, abs=0.01)
-    assert res.deviation.fat_g == pytest.approx(exp_f_dev, abs=0.01)
-
-    # Check within_tolerance coherence
-    assert res.within_tolerance.kcal == (abs(res.deviation.kcal_pct) <= tol["kcal_pct"])
-    assert res.within_tolerance.protein == (abs(res.deviation.protein_g) <= tol["protein_g"])
-    assert res.within_tolerance.carb == (abs(res.deviation.carb_g) <= tol["carb_g"])
-    assert res.within_tolerance.fat == (abs(res.deviation.fat_g) <= tol["fat_g"])
-
-    # Feasible must match all 4 within tolerance
-    all_within = (
-        res.within_tolerance.kcal
-        and res.within_tolerance.protein
-        and res.within_tolerance.carb
-        and res.within_tolerance.fat
-    )
-    assert res.feasible == all_within
+    # When feasible is True, deviation and within_tolerance are omitted (None) to reduce payload size
+    assert res.feasible is True
+    assert res.deviation is None
+    assert res.within_tolerance is None
 
 
 def test_batch_multiple_options_different_targets():
@@ -228,6 +205,8 @@ def test_impossible_target_returns_not_feasible_with_suggestion():
     res = output.results[0]
 
     assert res.feasible is False
+    assert res.deviation is not None
+    assert res.within_tolerance is not None
     assert res.message is not None
     assert len(res.message) > 0
     # Must have actionable suggestion
@@ -572,13 +551,11 @@ def test_fat_below_target_is_feasible():
 
     # Gordura obtida é bem menor que a meta de 10g (ex.: < 1g)
     assert res.totals.fat_g < 2.0
-    assert res.deviation.fat_g < -4.0  # desvio é bem negativo
-    # Deve ser considerado dentro da tolerância e viável
-    assert res.within_tolerance.fat is True
-    assert res.within_tolerance.kcal is True
-    assert res.within_tolerance.protein is True
+    # Deve ser considerado viável e omitir deviation/within_tolerance por ser feasible: True
     assert res.feasible is True
     assert res.message is None
+    assert res.deviation is None
+    assert res.within_tolerance is None
 
 
 def test_fat_above_ceiling_is_not_feasible_with_message():
@@ -1157,7 +1134,8 @@ def test_egg_fat_tolerance():
     out = fit_meals(db, args)
     res = out.results[0]
     assert res.feasible is True
-    assert res.within_tolerance.fat is True
+    assert res.within_tolerance is None
+    assert res.deviation is None
 
 
 def test_custom_food_with_tags():
@@ -1263,6 +1241,128 @@ def test_fit_meals_unknown_food_returns_alternatives():
     assert "Erro de validação ou processamento" not in res.message
     # Suggestions and alternatives are present
     assert res.suggestions is not None or res.alternatives is not None
+
+
+def test_peito_de_frango_desfiado_resolves_to_408_exact_match():
+    """Test that 'peito de frango desfiado' resolves to ID 408 (Frango, peito, sem pele, cozido) with exact_match=True."""
+    db = get_db()
+    food_id, desc, macros, matched, suggs = resolve_food(db, "peito de frango desfiado")
+    assert food_id == 408
+    assert "frango" in desc.lower()
+    assert "peito" in desc.lower()
+    assert "cozido" in desc.lower()
+
+    exact, note, alts = check_exact_match("peito de frango desfiado", food_id, desc, db)
+    assert exact is True
+    assert note is None
+    assert alts is None
+
+
+def test_fit_meals_compact_and_omit_nulls_and_deviation():
+    """
+    Test that fit_meals serialization:
+    - is compact JSON without indentation or newlines
+    - omits null fields (match_note, alternatives, substitutes, message, suggestions, household: null)
+    - omits deviation and within_tolerance when feasible: true
+    """
+    import asyncio
+    from taco_mcp.server import call_tool
+
+    args = {
+        "meals": [
+            {
+                "id": "teste_compacto",
+                "target": {"kcal": 234.5, "protein_g": 33.5, "carb_g": 14.7, "fat_g": 4.6},
+                "items": [
+                    {"food": 486, "role": "protein", "min_g": 30, "max_g": 300, "step_g": 10},
+                    {"food": 239, "role": "fruit", "min_g": 30, "max_g": 200, "step_g": 10},
+                    {"food": 78, "role": "free"},
+                ],
+            }
+        ]
+    }
+    content = asyncio.run(call_tool("fit_meals", args))
+    raw_text = content[0].text
+
+    # No newlines (compact)
+    assert "\n" not in raw_text
+
+    # Null fields omitted
+    assert "match_note" not in raw_text
+    assert "alternatives" not in raw_text
+    assert "substitutes" not in raw_text
+    assert "message" not in raw_text
+    assert "suggestions" not in raw_text
+    assert '"household":null' not in raw_text
+
+    # Feasible: true omits deviation and within_tolerance
+    assert '"feasible":true' in raw_text
+    assert "deviation" not in raw_text
+    assert "within_tolerance" not in raw_text
+
+
+def test_batch_12_meals_payload_size_below_15k():
+    """
+    Test that a realistic batch of 12 meals (4 meals x 3 options, up to 6 items per option) produces
+    a serialized payload well below 15,000 characters.
+    """
+    import asyncio
+    from taco_mcp.server import call_tool
+
+    meals = [
+        # Café (3 items) x 3
+        *[{
+            "id": f"cafe_{i}",
+            "target": {"kcal": 400.0, "protein_g": 25.0, "carb_g": 45.0, "fat_g": 12.0},
+            "items": [
+                {"food": "ovo cozido", "role": "protein"},
+                {"food": "pão francês", "role": "carb"},
+                {"food": "banana", "role": "fruit", "min_g": 65, "max_g": 65},
+            ],
+        } for i in range(1, 4)],
+        # Almoço (6 items) x 3
+        *[{
+            "id": f"almoco_{i}",
+            "target": {"kcal": 480.0, "protein_g": 40.0, "carb_g": 45.0, "fat_g": 15.0},
+            "items": [
+                {"food": "peito de frango cozido", "role": "protein"},
+                {"food": "arroz cozido", "role": "carb"},
+                {"food": "feijão carioca cozido", "role": "carb"},
+                {"food": "azeite de oliva", "role": "fat"},
+                {"food": "brócolis cozido", "role": "veg"},
+                {"food": "salada de folhas", "role": "free"},
+            ],
+        } for i in range(1, 4)],
+        # Lanche (3 items) x 3
+        *[{
+            "id": f"lanche_{i}",
+            "target": {"kcal": 240.0, "protein_g": 20.0, "carb_g": 25.0, "fat_g": 8.0},
+            "items": [
+                {"food": "peito de frango desfiado", "role": "protein"},
+                {"food": "pão de forma", "role": "carb"},
+                {"food": "maçã", "role": "fruit", "min_g": 130, "max_g": 130},
+            ],
+        } for i in range(1, 4)],
+        # Jantar (5 items) x 3
+        *[{
+            "id": f"jantar_{i}",
+            "target": {"kcal": 480.0, "protein_g": 40.0, "carb_g": 45.0, "fat_g": 15.0},
+            "items": [
+                {"food": "patinho grelhado", "role": "protein"},
+                {"food": "batata doce cozida", "role": "carb"},
+                {"food": "azeite de oliva", "role": "fat"},
+                {"food": "abobrinha cozida", "role": "veg"},
+                {"food": "salada de folhas", "role": "free"},
+            ],
+        } for i in range(1, 4)],
+    ]
+
+    content = asyncio.run(call_tool("fit_meals", {"meals": meals}))
+    raw_text = content[0].text
+
+    assert "\n" not in raw_text
+    assert len(raw_text) < 15000, f"Payload size {len(raw_text)} exceeded 15,000 characters"
+
 
 
 

@@ -503,7 +503,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         result = run_fit_meals(db, arguments)
         return [TextContent(
             type="text",
-            text=result.model_dump_json(indent=2)
+            text=result.model_dump_json(exclude_none=True)
         )]
     
     elif name == "add_custom_food":

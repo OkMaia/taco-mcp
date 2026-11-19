@@ -42,5 +42,13 @@ def test_prep_variants_and_extraction():
     assert raw_grelhado == "grelhado"
     assert canon_grelhado == "grelhado"
 
+    raw_desfiado, canon_desfiado = extract_prep("peito de frango desfiado")
+    assert raw_desfiado == "desfiado"
+    assert canon_desfiado == "cozido"
+
+    variants_desfiado = get_prep_variants("desfiado")
+    assert "cozido" in variants_desfiado
+    assert "desfiado" in variants_desfiado
+
     assert get_prep_variants("arroz") == ["arroz"]
 

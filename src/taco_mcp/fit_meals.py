@@ -78,6 +78,13 @@ COMMON_MEAL_ALIASES = {
     "frango peito grelhado": 410,
     "peito frango": 410,
     "frango cozido": 408,
+    "peito de frango cozido": 408,
+    "peito de frango desfiado": 408,
+    "frango desfiado": 408,
+    "frango peito desfiado": 408,
+    "peito frango desfiado": 408,
+    "frango cozido desfiado": 408,
+    "peito de frango cozido desfiado": 408,
     "patinho grelhado": 377,
     "patinho": 377,
     "patinho moido": 377,
@@ -918,7 +925,7 @@ def resolve_food(
             try:
                 if db.is_postgres:
                     with conn.cursor() as cur:
-                        conds = " OR ".join(["description_normalized ILIKE %s" for _ in search_words])
+                        and_conds = " AND ".join(["description_normalized ILIKE %s" for _ in search_words])
                         params = [f"%{w}%" for w in search_words]
                         cur.execute(
                             f"""SELECT id, description, kcal_per_100g,
@@ -926,16 +933,31 @@ def resolve_food(
                                       carbs_g_per_100g, fiber_g_per_100g,
                                       sodium_mg_per_100g
                                FROM foods
-                               WHERE {conds}
+                               WHERE {and_conds}
+                               ORDER BY id ASC
                                LIMIT 1""",
                             params,
                         )
                         row = cur.fetchone()
+                        if not row:
+                            or_conds = " OR ".join(["description_normalized ILIKE %s" for _ in search_words])
+                            cur.execute(
+                                f"""SELECT id, description, kcal_per_100g,
+                                          protein_g_per_100g, fat_g_per_100g,
+                                          carbs_g_per_100g, fiber_g_per_100g,
+                                          sodium_mg_per_100g
+                                   FROM foods
+                                   WHERE {or_conds}
+                                   ORDER BY similarity(description_normalized, %s) DESC, id ASC
+                                   LIMIT 1""",
+                                params + [clean_food_str],
+                            )
+                            row = cur.fetchone()
                         if row:
                             macros = db._row_to_macros(row)
                             return (row["id"], row["description"], macros, food_str, [])
                 else:
-                    fts_q = " OR ".join(search_words)
+                    and_q = " AND ".join(search_words)
                     cursor = conn.execute(
                         """SELECT foods.id, foods.description, foods.kcal_per_100g,
                                   foods.protein_g_per_100g, foods.fat_g_per_100g,
@@ -946,9 +968,24 @@ def resolve_food(
                            WHERE foods_fts MATCH ?
                            ORDER BY rank
                            LIMIT 1""",
-                        (fts_q,),
+                        (and_q,),
                     )
                     row = cursor.fetchone()
+                    if not row:
+                        or_q = " OR ".join(search_words)
+                        cursor = conn.execute(
+                            """SELECT foods.id, foods.description, foods.kcal_per_100g,
+                                      foods.protein_g_per_100g, foods.fat_g_per_100g,
+                                      carbs_g_per_100g, foods.fiber_g_per_100g,
+                                      foods.sodium_mg_per_100g
+                               FROM foods_fts
+                               JOIN foods ON foods_fts.rowid = foods.id
+                               WHERE foods_fts MATCH ?
+                               ORDER BY rank
+                               LIMIT 1""",
+                            (or_q,),
+                        )
+                        row = cursor.fetchone()
                     if row:
                         macros = db._row_to_macros(row)
                         r_id = row["id"] if hasattr(row, "keys") else row[0]
@@ -1347,7 +1384,7 @@ def solve_meal_option(
                         measures_map=measures_map,
                     )
                 else:
-                    substitutes_list = []
+                    substitutes_list = None
 
             final_items.append(
                 FitMealItemResult(
@@ -1497,8 +1534,8 @@ def solve_meal_option(
         feasible=feasible,
         items=final_items,
         totals=totals,
-        deviation=deviation,
-        within_tolerance=within_tolerance,
+        deviation=None if feasible else deviation,
+        within_tolerance=None if feasible else within_tolerance,
         message=message,
     )
 

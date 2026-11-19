@@ -78,7 +78,7 @@ PREP_STATES = {
     "moido": "moido", "moida": "moido", "moidos": "moido", "moidas": "moido",
     "picado": "picado", "picada": "picado", "picados": "picado", "picadas": "picado",
     "ralado": "ralado", "ralada": "ralado", "ralados": "ralado", "raladas": "ralado",
-    "desfiado": "desfiado", "desfiada": "desfiado", "desfiados": "desfiado", "desfiadas": "desfiado",
+    "desfiado": "cozido", "desfiada": "cozido", "desfiados": "cozido", "desfiadas": "cozido",
     "ensopado": "ensopado", "ensopada": "ensopado", "ensopados": "ensopado", "ensopadas": "ensopado",
     "empanado": "empanado", "empanada": "empanado", "empanados": "empanado", "empanadas": "empanado",
 }
